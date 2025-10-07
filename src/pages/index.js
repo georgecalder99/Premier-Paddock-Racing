@@ -105,16 +105,16 @@ function Hero({ isAdmin, loggedIn }) {
       </div>
 
       {/* Admin button */}
-      {isAdmin && (
-        <div className="absolute right-6 top-6 z-10">
-          <a
-            href="/admin/ballots"
-            className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10"
-          >
-            Admin
-          </a>
-        </div>
-      )}
+     {isAdmin && (
+  <div className="absolute right-6 top-6 z-10">
+    <Link
+      href="/admin/ballots"
+      className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10"
+    >
+      Admin
+    </Link>
+  </div>
+)}
 
       {/* Foreground */}
       <div className="relative mx-auto max-w-7xl px-6 py-24 text-center text-white md:py-32">

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 // src/pages/contact-us.js
 import Head from "next/head";
 import { useRef, useState } from "react";
