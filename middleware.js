@@ -1,40 +1,51 @@
-// middleware.js (root)
-import { NextResponse } from 'next/server';
+// middleware.js
+import { NextResponse, NextRequest } from "next/server";
 
-export const config = {
-  // protect everything except Next static assets & a few common public files
-  matcher: ['/((?!_next/|favicon.ico|robots.txt|sitemap.xml|assets/).*)'],
-};
+const ENABLED =
+  process.env.ENABLE_BASIC_AUTH || process.env.NEXT_PUBLIC_ENABLE_BASIC_AUTH;
+const USER = process.env.BASIC_AUTH_USER || "";
+const PASS = process.env.BASIC_AUTH_PASS || "";
 
-export function middleware(req) {
-  // Optional flag: only enable if set to "1"
-  const enabled = process.env.NEXT_PUBLIC_ENABLE_BASIC_AUTH === '1';
+export function middleware(req /** @type {NextRequest} */) {
+  // If disabled, let everything through
+  if (!ENABLED) return NextResponse.next();
 
-  const USER = process.env.BASIC_AUTH_USER || '';
-  const PASS = process.env.BASIC_AUTH_PASS || '';
-  const REALM = process.env.BASIC_AUTH_REALM || 'Restricted';
+  const { pathname } = req.nextUrl;
 
-  // If disabled or creds not set, let traffic through
-  if (!enabled || !USER || !PASS) {
+  // Allow assets and common files (adjust as needed)
+  if (
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/favicon.ico") ||
+    pathname.startsWith("/robots.txt") ||
+    pathname.startsWith("/sitemap.xml") ||
+    pathname.startsWith("/api/health")
+  ) {
     return NextResponse.next();
   }
 
-  const auth = req.headers.get('authorization');
+  const header = req.headers.get("authorization") || "";
+  const [scheme, encoded] = header.split(" ");
 
-  if (auth) {
-    const [scheme, encoded] = auth.split(' ');
-    if (scheme === 'Basic') {
-      const [u, p] = atob(encoded).split(':');
-      if (u === USER && p === PASS) {
-        return NextResponse.next();
-      }
+  if (scheme === "Basic" && encoded) {
+    // Edge runtime has atob()
+    const decoded = atob(encoded);
+    const [u, p] = decoded.split(":");
+    if (u === USER && p === PASS) {
+      return NextResponse.next();
     }
   }
 
-  return new NextResponse('Auth required', {
+  return new NextResponse("Authentication required", {
     status: 401,
     headers: {
-      'WWW-Authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
+      "WWW-Authenticate": 'Basic realm="Protected", charset="UTF-8"',
     },
   });
 }
+
+export const config = {
+  // Protect everything except Next internals & a few files
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+  ],
+};
