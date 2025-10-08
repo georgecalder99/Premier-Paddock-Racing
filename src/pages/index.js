@@ -264,7 +264,7 @@ function RegisterInterest() {
             Register your interest for our launch
           </h2>
           <p className="mt-2 text-center text-gray-700">
-            Priced at <strong>£55 a share</strong> and in training with one of Britain’s
+            Priced at <strong>£45 a share</strong> and in training with one of Britain’s
             leading trainers. <em>We are diving straight in!!</em> 
           </p>
 
@@ -443,7 +443,7 @@ function FeaturedHorses() {
         </div>
       )}
       <p className="mt-4 text-xs text-gray-500">
-        We show live share progress so you always know availability.
+        We have got new horses coming very soon!
       </p>
     </section>
   );
