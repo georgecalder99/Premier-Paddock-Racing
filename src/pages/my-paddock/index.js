@@ -228,12 +228,15 @@ export default function MyPaddock() {
             <TabButton id="updates" activeTab={activeTab} setActiveTab={setActiveTab}>
               Updates
             </TabButton>
+            <TabButton id="renew" activeTab={activeTab} setActiveTab={setActiveTab}>
+  Renew
+</TabButton>
           </div>
         </section>
 
         {/* Tab Panels */}
         <section className="mt-6">
-          {activeTab === "owned" && <OwnedTab loading={loadingOwned} owned={owned} />}
+          {activeTab === "owned" && <OwnedTab loading={loadingOwned} owned={owned} goTab={setActiveTab}/>}
           {activeTab === "wallet" && <WalletTab />}
           {activeTab === "ballots" && (
             <BallotsSection userId={session.user.id} ownedHorseIds={ownedHorseIds} />
@@ -246,6 +249,9 @@ export default function MyPaddock() {
             />
           )}
           {activeTab === "updates" && <UpdatesTab ownedHorseIds={ownedHorseIds} />}
+          {activeTab === "renew" && (
+  <RenewTab userId={session.user.id} owned={owned} />
+)}
         </section>
       </main>
     </>
@@ -283,7 +289,7 @@ function StatCard({ label, value }) {
 /* ===========================
    Owned Tab
 =========================== */
-function OwnedTab({ loading, owned }) {
+function OwnedTab({ loading, owned, goTab }) {
   return (
     <div id="panel-owned">
       <h2 className="text-2xl font-bold text-green-900 mb-4">Owned horses</h2>
@@ -325,17 +331,44 @@ function OwnedTab({ loading, owned }) {
               </span>
             </div>
 
-            <div className="mt-4 flex gap-2">
-              <Link
-                className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50 text-center"
-                href={`/horses/${o.horse.id}`}
-              >
-                View updates
-              </Link>
-              <button className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50">
-                Manage ballot
-              </button>
-            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+  <button
+    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+    onClick={() => {
+      goTab("updates");
+      // optional smooth scroll
+      setTimeout(() => {
+        document.getElementById("panel-updates")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }}
+  >
+    View Updates
+  </button>
+
+  <button
+    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+    onClick={() => {
+      goTab("ballots");
+      setTimeout(() => {
+        document.getElementById("panel-ballots")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }}
+  >
+    View Ballots
+  </button>
+
+  <button
+    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+    onClick={() => {
+      goTab("voting");
+      setTimeout(() => {
+        document.getElementById("panel-voting")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }}
+  >
+    View Voting
+  </button>
+</div>
           </article>
         ))}
       </div>
@@ -343,37 +376,6 @@ function OwnedTab({ loading, owned }) {
   );
 }
 
-/* ===========================
-   Wallet Tab (placeholder)
-=========================== */
-function WalletTab() {
-  return (
-    <div id="panel-wallet" className="rounded-xl border bg-white p-6 shadow-sm">
-      <h2 className="text-2xl font-bold text-green-900 mb-2">Wallet</h2>
-      <p className="text-gray-700">
-        Your wallet will show your balance, payout history, and withdrawals. (We’ll wire this up when we add Stripe + a ledger.)
-      </p>
-      <div className="mt-4 grid sm:grid-cols-3 gap-4">
-        <div className="rounded-lg border p-4">
-          <div className="text-xs text-gray-500 uppercase">Balance</div>
-          <div className="text-xl font-bold mt-1">£0.00</div>
-        </div>
-        <div className="rounded-lg border p-4">
-          <div className="text-xs text-gray-500 uppercase">Pending Payouts</div>
-          <div className="text-xl font-bold mt-1">£0.00</div>
-        </div>
-        <div className="rounded-lg border p-4">
-          <div className="text-xs text-gray-500 uppercase">Withdrawable</div>
-          <div className="text-xl font-bold mt-1">£0.00</div>
-        </div>
-      </div>
-      <div className="mt-4 flex gap-2">
-        <button className="px-4 py-2 rounded border hover:bg-gray-50">Add funds</button>
-        <button className="px-4 py-2 rounded border hover:bg-gray-50">Withdraw</button>
-      </div>
-    </div>
-  );
-}
 
 /* ===========================
    BALLOTS SECTION
@@ -418,6 +420,7 @@ function OpenBallots({ userId, ownedHorseIds }) {
   const [myEntries, setMyEntries] = useState(new Set());
   const [entryCounts, setEntryCounts] = useState({});
   const [joining, setJoining] = useState({}); // ballot_id -> bool
+  const [horseNames, setHorseNames] = useState({}); // horse_id -> name
 
   useEffect(() => {
     async function load() {
@@ -427,6 +430,7 @@ function OpenBallots({ userId, ownedHorseIds }) {
         setOpenBallots([]);
         setMyEntries(new Set());
         setEntryCounts({});
+        setHorseNames({});
         setLoading(false);
         return;
       }
@@ -440,6 +444,19 @@ function OpenBallots({ userId, ownedHorseIds }) {
 
       setOpenBallots(ballots || []);
 
+      // horse names for these ballots
+      const ids = Array.from(new Set((ballots || []).map(b => b.horse_id))).filter(Boolean);
+      if (ids.length) {
+        const { data: horses } = await supabase
+          .from("horses")
+          .select("id,name")
+          .in("id", ids);
+        setHorseNames(Object.fromEntries((horses || []).map(h => [h.id, h.name])));
+      } else {
+        setHorseNames({});
+      }
+
+      // which ballots I've entered
       const { data: entries } = await supabase
         .from("ballot_entries")
         .select("ballot_id")
@@ -498,20 +515,39 @@ function OpenBallots({ userId, ownedHorseIds }) {
         const cnt = entryCounts[b.id] ?? 0;
         const typeLabel = b.type === "badge" ? "Owners’ badges" : "Stable visit";
         const isClosedByTime = b.cutoff_at && new Date(b.cutoff_at).getTime() <= Date.now();
+        const horseName = b.horse_id ? (horseNames[b.horse_id] || "—") : "—";
 
         return (
           <article key={b.id} className="bg-white rounded-xl border p-6 shadow-sm">
+            {/* 🐴 Horse name at top (same style as Voting) */}
+            {horseName && horseName !== "—" && (
+              <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
+            )}
+
             <h3 className="text-lg font-semibold text-green-900">{b.title}</h3>
+
+            {/* Subheading (keep everything else, but don’t repeat the horse name) */}
             <p className="text-sm text-gray-600 mt-1">
               {typeLabel}
-              {b.event_date ? ` • ${new Date(b.event_date).toLocaleDateString()}` : ""}
+              {b.event_date ? ` • Event: ${new Date(b.event_date).toLocaleDateString()}` : ""}
               {isClosedByTime ? " • Closed" : ""}
             </p>
+
             {b.description && <p className="text-sm text-gray-700 mt-2">{b.description}</p>}
-            <div className="mt-3 text-xs text-gray-600">
-              <div>Closes: <strong>{new Date(b.cutoff_at).toLocaleString()}</strong></div>
-              {b.max_winners > 0 && <div>Winners: <strong>{b.max_winners}</strong></div>}
-              <div>Entries so far: <strong>{cnt}</strong></div>
+
+            <div className="mt-3 text-sm font-semibold text-green-900">Ballot information</div>
+            <div className="mt-1 text-xs text-gray-600">
+              <div>
+                Closes: <strong>{new Date(b.cutoff_at).toLocaleString()}</strong>
+              </div>
+              {b.max_winners > 0 && (
+                <div>
+                  Winners: <strong>{b.max_winners}</strong>
+                </div>
+              )}
+              <div>
+                Entries so far: <strong>{cnt}</strong>
+              </div>
             </div>
 
             <div className="mt-4 flex gap-3">
@@ -549,7 +585,6 @@ function MyResults({ userId }) {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      // 1) my results (winner/unsuccessful)
       const { data: results } = await supabase
         .from("ballot_results")
         .select("ballot_id, result")
@@ -562,7 +597,6 @@ function MyResults({ userId }) {
         return;
       }
 
-      // 2) fetch ballots for those ids; then resolve horses separately
       const { data: ballots, error: ballotsErr } = await supabase
         .from("ballots")
         .select("id, title, type, event_date, cutoff_at, horse_id")
@@ -632,6 +666,11 @@ function MyResults({ userId }) {
                   />
                 )}
                 <div>
+                  {/* 🐴 Horse name at top (same style as Voting) */}
+                  {horse?.name && (
+                    <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horse.name}</h4>
+                  )}
+
                   <div className="font-medium">
                     {b.title}{" "}
                     <span className="text-xs text-gray-500">
@@ -639,7 +678,7 @@ function MyResults({ userId }) {
                     </span>
                   </div>
                   <div className="text-xs text-gray-600">
-                    {horse?.name ? `Horse: ${horse.name} • ` : ""}
+                    {/* remove duplicate horse label here; keep drawn + date */}
                     Drawn • {new Date(b.cutoff_at).toLocaleString()}
                   </div>
                 </div>
@@ -682,31 +721,6 @@ function MyResults({ userId }) {
   );
 }
 
-/* --- Simple celebratory / consolation graphics --- */
-function WinCard() {
-  return (
-    <div className="rounded-xl border-2 border-emerald-400 bg-emerald-50 p-5 text-center">
-      <div className="text-4xl">🎉🏆</div>
-      <h4 className="mt-2 text-xl font-bold text-emerald-700">Congratulations!</h4>
-      <p className="text-sm text-emerald-800 mt-1">
-        You won this ballot. We’ll be in touch with details shortly.
-      </p>
-    </div>
-  );
-}
-
-function LoseCard() {
-  return (
-    <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-5 text-center">
-      <div className="text-4xl">🎈</div>
-      <h4 className="mt-2 text-xl font-bold text-amber-700">Not this time</h4>
-      <p className="text-sm text-amber-800 mt-1">
-        Better luck next draw — thank you for entering!
-      </p>
-    </div>
-  );
-}
-
 /* ===========================
    VOTING SECTION
    Sub-tabs: open | results
@@ -718,7 +732,7 @@ function VotingSection({ userId, ownedHorseIds, isAdmin }) {
       <div className="mb-3">
         <h2 className="text-3xl font-extrabold text-green-900">Your horse, Your say</h2>
         <p className="text-sm text-gray-600">
-          Cast your vote on key decisions. Results remain hidden while a vote is open (admins only).
+          Cast your vote on key decisions. Results avaliable once vote is closed.
         </p>
       </div>
 
@@ -740,9 +754,10 @@ function VotingSection({ userId, ownedHorseIds, isAdmin }) {
 /* ----- Open Votes (single-choice polls; one-shot, no updates) ----- */
 function OpenVotes({ userId, ownedHorseIds }) {
   const [loading, setLoading] = useState(true);
-  const [votes, setVotes] = useState([]); // [{vote, options:[], myResponseId, myOptionId}]
-  const [saving, setSaving] = useState({}); // vote_id -> bool
-  const [chosen, setChosen] = useState({}); // vote_id -> option_id
+  const [votes, setVotes] = useState([]);
+  const [saving, setSaving] = useState({});
+  const [chosen, setChosen] = useState({});
+  const [horseNames, setHorseNames] = useState({}); // 🐴 new
 
   useEffect(() => {
     async function load() {
@@ -750,12 +765,11 @@ function OpenVotes({ userId, ownedHorseIds }) {
 
       if (!ownedHorseIds || ownedHorseIds.length === 0) {
         setVotes([]);
+        setHorseNames({});
         setLoading(false);
         return;
       }
 
-      // Open votes that are either club-wide or for horses the owner has.
-      // Include votes with no cutoff OR cutoff in the future.
       const nowIso = new Date().toISOString();
       const { data: openVotes } = await supabase
         .from("votes")
@@ -766,11 +780,21 @@ function OpenVotes({ userId, ownedHorseIds }) {
         .order("created_at", { ascending: false })
         .limit(20);
 
-      const voteIds = (openVotes || []).map(v => v.id);
-      if (voteIds.length === 0) {
+      const voteIds = (openVotes || []).map((v) => v.id);
+      if (!voteIds.length) {
         setVotes([]);
+        setHorseNames({});
         setLoading(false);
         return;
+      }
+
+      // 🐴 fetch horse names
+      const horseIds = Array.from(new Set((openVotes || []).map((v) => v.horse_id).filter(Boolean)));
+      if (horseIds.length) {
+        const { data: horses } = await supabase.from("horses").select("id,name").in("id", horseIds);
+        setHorseNames(Object.fromEntries((horses || []).map((h) => [h.id, h.name])));
+      } else {
+        setHorseNames({});
       }
 
       // Options
@@ -780,12 +804,12 @@ function OpenVotes({ userId, ownedHorseIds }) {
         .in("vote_id", voteIds);
 
       const optionsByVote = {};
-      (allOptions || []).forEach(o => {
+      (allOptions || []).forEach((o) => {
         optionsByVote[o.vote_id] = optionsByVote[o.vote_id] || [];
         optionsByVote[o.vote_id].push(o);
       });
 
-      // My responses (if any)
+      // My responses
       const { data: my } = await supabase
         .from("vote_responses")
         .select("id, vote_id, option_id")
@@ -793,10 +817,10 @@ function OpenVotes({ userId, ownedHorseIds }) {
         .in("vote_id", voteIds);
 
       const myByVote = {};
-      (my || []).forEach(r => (myByVote[r.vote_id] = r));
+      (my || []).forEach((r) => (myByVote[r.vote_id] = r));
 
       setVotes(
-        (openVotes || []).map(v => ({
+        (openVotes || []).map((v) => ({
           vote: v,
           options: optionsByVote[v.id] || [],
           myResponseId: myByVote[v.id]?.id || null,
@@ -804,7 +828,6 @@ function OpenVotes({ userId, ownedHorseIds }) {
         }))
       );
 
-      // If user already voted, prefill chosen (but UI will be locked anyway)
       setChosen(
         (openVotes || []).reduce((acc, v) => {
           if (myByVote[v.id]?.option_id) acc[v.id] = myByVote[v.id].option_id;
@@ -819,24 +842,16 @@ function OpenVotes({ userId, ownedHorseIds }) {
 
   async function submitVote(voteId) {
     const optionId = chosen[voteId];
-    if (!optionId) {
-      alert("Please select an option.");
-      return;
-    }
-    setSaving(p => ({ ...p, [voteId]: true }));
+    if (!optionId) return alert("Please select an option.");
+    setSaving((p) => ({ ...p, [voteId]: true }));
     try {
-      // If a response already exists, DO NOT allow updates (one-shot rule)
       const { data: existing } = await supabase
         .from("vote_responses")
         .select("id")
         .eq("vote_id", voteId)
         .eq("user_id", userId)
         .maybeSingle();
-
-      if (existing) {
-        alert("Your vote is already recorded and cannot be changed.");
-        return;
-      }
+      if (existing) return alert("Your vote is already recorded.");
 
       const { error } = await supabase.from("vote_responses").insert({
         vote_id: voteId,
@@ -845,19 +860,16 @@ function OpenVotes({ userId, ownedHorseIds }) {
       });
       if (error) throw error;
 
-      // reflect locally (lock the UI)
-      setVotes(items =>
-        items.map(it =>
-          it.vote.id === voteId
-            ? { ...it, myOptionId: optionId, myResponseId: "tmp" }
-            : it
+      setVotes((items) =>
+        items.map((it) =>
+          it.vote.id === voteId ? { ...it, myOptionId: optionId, myResponseId: "tmp" } : it
         )
       );
     } catch (e) {
       console.error("submitVote error:", e);
       alert("Could not submit your vote. Please try again.");
     } finally {
-      setSaving(p => ({ ...p, [voteId]: false }));
+      setSaving((p) => ({ ...p, [voteId]: false }));
     }
   }
 
@@ -866,9 +878,7 @@ function OpenVotes({ userId, ownedHorseIds }) {
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm">
         <h3 className="font-semibold text-green-900">No open votes right now</h3>
-        <p className="text-sm text-gray-600 mt-1">
-          When a new vote opens, it will appear here.
-        </p>
+        <p className="text-sm text-gray-600 mt-1">When a new vote opens, it will appear here.</p>
       </div>
     );
 
@@ -877,30 +887,36 @@ function OpenVotes({ userId, ownedHorseIds }) {
       {votes.map(({ vote: v, options, myOptionId }) => {
         const closes = v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null;
         const hasVoted = Boolean(myOptionId);
+        const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null; // 🐴
 
         return (
           <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
-            {v.description && (
-              <p className="text-sm text-gray-700 mt-1">{v.description}</p>
+            {/* 🐴 Horse name prominently at top */}
+            {horseName && (
+              <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
             )}
-            <div className="text-xs text-gray-600 mt-2">
-              {v.horse_id ? <>Horse-specific</> : <>Club-wide</>}
-              {closes ? <> • Closes: <strong>{closes}</strong></> : null}
-            </div>
+
+            <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
+            {v.description && <p className="text-sm text-gray-700 mt-1">{v.description}</p>}
+
+            {closes && (
+              <p className="text-xs text-gray-600 mt-2">
+                Closes: <strong>{closes}</strong>
+              </p>
+            )}
 
             <fieldset className="mt-3 space-y-2" disabled={hasVoted}>
               {options.length === 0 ? (
                 <p className="text-sm text-gray-600">No options configured.</p>
               ) : (
-                options.map(opt => (
+                options.map((opt) => (
                   <label key={opt.id} className="flex items-center gap-2 text-sm">
                     <input
                       type="radio"
                       name={`vote-${v.id}`}
                       value={opt.id}
                       checked={(chosen[v.id] || "") === opt.id}
-                      onChange={() => setChosen(p => ({ ...p, [v.id]: opt.id }))}
+                      onChange={() => setChosen((p) => ({ ...p, [v.id]: opt.id }))}
                       disabled={hasVoted}
                     />
                     <span>{opt.label}</span>
@@ -922,25 +938,13 @@ function OpenVotes({ userId, ownedHorseIds }) {
                 <span className="inline-flex items-center text-sm px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800">
                   ✅ You voted for&nbsp;
                   <strong className="ml-1">
-                    {options.find(o => o.id === myOptionId)?.label || "your choice"}
+                    {options.find((o) => o.id === myOptionId)?.label || "your choice"}
                   </strong>
                 </span>
               )}
-
-              {v.horse_id && (
-                <Link
-                  href={`/horses/${v.horse_id}`}
-                  className="px-4 py-2 border rounded text-green-900 hover:bg-green-50"
-                >
-                  View horse
-                </Link>
-              )}
             </div>
 
-            {/* While open, do NOT show results to owners */}
-            <p className="mt-3 text-xs text-gray-500">
-              Results are revealed when the vote closes.
-            </p>
+            <p className="mt-3 text-xs text-gray-500">Results are revealed when the vote closes.</p>
           </article>
         );
       })}
@@ -948,10 +952,11 @@ function OpenVotes({ userId, ownedHorseIds }) {
   );
 }
 
-/* -/* ----- Vote Results (closed votes only; hide counts; show winner only) ----- */
+/* ----- Vote Results (closed votes only; show winner + horse name) ----- */
 function VoteResults({ userId, ownedHorseIds, isAdmin }) {
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState([]); // [{ vote, winnerLabels: string[], closedAt?: string }]
+  const [items, setItems] = useState([]);
+  const [horseNames, setHorseNames] = useState({}); // 🐴
 
   useEffect(() => {
     async function load() {
@@ -959,11 +964,11 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
 
       if (!ownedHorseIds || ownedHorseIds.length === 0) {
         setItems([]);
+        setHorseNames({});
         setLoading(false);
         return;
       }
 
-      // Show ONLY CLOSED votes here (no live results in My Paddock).
       const { data: votes, error: votesErr } = await supabase
         .from("votes")
         .select("id, horse_id, title, description, status, cutoff_at, created_at")
@@ -980,39 +985,22 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
       }
 
       const voteIds = (votes || []).map((v) => v.id);
-      if (voteIds.length === 0) {
-        setItems([]);
-        setLoading(false);
-        return;
+      const horseIds = Array.from(new Set((votes || []).map((v) => v.horse_id).filter(Boolean)));
+      if (horseIds.length) {
+        const { data: horses } = await supabase.from("horses").select("id,name").in("id", horseIds);
+        setHorseNames(Object.fromEntries((horses || []).map((h) => [h.id, h.name])));
       }
 
-      // Options for these votes
-      const { data: options, error: optErr } = await supabase
+      const { data: options } = await supabase
         .from("vote_options")
         .select("id, vote_id, label")
         .in("vote_id", voteIds);
 
-      if (optErr) {
-        console.error(optErr);
-        setItems([]);
-        setLoading(false);
-        return;
-      }
-
-      // All responses (we won't display counts—just need to find the winner)
-      const { data: responses, error: respErr } = await supabase
+      const { data: responses } = await supabase
         .from("vote_responses")
         .select("vote_id, option_id")
         .in("vote_id", voteIds);
 
-      if (respErr) {
-        console.error(respErr);
-        setItems([]);
-        setLoading(false);
-        return;
-      }
-
-      // Group helpers
       const optsByVote = {};
       (options || []).forEach((o) => {
         (optsByVote[o.vote_id] = optsByVote[o.vote_id] || []).push(o);
@@ -1030,7 +1018,6 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
         let max = 0;
         let winners = [];
 
-        // Compute winner(s) without exposing numbers
         for (const o of opts) {
           const c = counts[o.id] || 0;
           if (c > max) {
@@ -1043,7 +1030,7 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
 
         return {
           vote: v,
-          winnerLabels: winners, // empty => no votes; >1 => tie
+          winnerLabels: winners,
           closedAt: v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null,
         };
       });
@@ -1052,11 +1039,10 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
       setLoading(false);
     }
     load();
-    // isAdmin is unused here intentionally (no live results in My Paddock)
   }, [userId, ownedHorseIds, isAdmin]);
 
   if (loading) return <p>Loading results…</p>;
-  if (items.length === 0) {
+  if (items.length === 0)
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm">
         <h3 className="font-semibold text-green-900">No results yet</h3>
@@ -1065,58 +1051,55 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
         </p>
       </div>
     );
-  }
 
   return (
     <div className="space-y-6">
-      {items.map(({ vote: v, winnerLabels, closedAt }) => (
-        <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
-            <span className="text-xs uppercase tracking-wide text-gray-500">
-              {v.horse_id ? "Horse-specific" : "Club-wide"} • closed
-            </span>
-          </div>
-
-          {v.description && (
-            <p className="text-sm text-gray-700 mt-1">{v.description}</p>
-          )}
-          {closedAt && (
-            <p className="text-xs text-gray-600 mt-1">Closed: {closedAt}</p>
-          )}
-
-          <div className="mt-4">
-            {winnerLabels.length === 0 ? (
-              <p className="text-sm text-gray-600">No votes were cast.</p>
-            ) : winnerLabels.length === 1 ? (
-              <p className="text-sm">
-                Winning option:&nbsp;
-                <span className="inline-flex items-center px-2 py-0.5 rounded bg-green-50 border border-green-200 text-green-800 font-semibold">
-                  {winnerLabels[0]}
-                </span>
-              </p>
-            ) : (
-              <p className="text-sm">
-                Tie between:&nbsp;
-                {winnerLabels.map((w) => (
-                  <span
-                    key={w}
-                    className="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 font-semibold mr-2"
-                  >
-                    {w}
-                  </span>
-                ))}
-              </p>
+      {items.map(({ vote: v, winnerLabels, closedAt }) => {
+        const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null; // 🐴
+        return (
+          <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
+            {horseName && (
+              <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
             )}
-          </div>
-        </article>
-      ))}
+
+            <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
+            {v.description && <p className="text-sm text-gray-700 mt-1">{v.description}</p>}
+            {closedAt && <p className="text-xs text-gray-600 mt-1">Closed: {closedAt}</p>}
+
+            <div className="mt-4">
+              {winnerLabels.length === 0 ? (
+                <p className="text-sm text-gray-600">No votes were cast.</p>
+              ) : winnerLabels.length === 1 ? (
+                <p className="text-sm">
+                  Winning option:&nbsp;
+                  <span className="inline-flex items-center px-2 py-0.5 rounded bg-green-50 border border-green-200 text-green-800 font-semibold">
+                    {winnerLabels[0]}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-sm">
+                  Tie between:&nbsp;
+                  {winnerLabels.map((w) => (
+                    <span
+                      key={w}
+                      className="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 font-semibold mr-2"
+                    >
+                      {w}
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
 
 /* ===========================
    Updates Tab (owner-only feed)
+   — styled like ballots/votes
 =========================== */
 function UpdatesTab({ ownedHorseIds }) {
   const [loading, setLoading] = useState(true);
@@ -1185,39 +1168,588 @@ function UpdatesTab({ ownedHorseIds }) {
 
   return (
     <ul className="space-y-4">
-      {updates.map((u) => (
-        <li key={u.id} className="rounded-lg border bg-white p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            {u.horse?.photo_url && (
+      {updates.map((u) => {
+        const when = new Date(u.published_at || u.created_at).toLocaleString();
+        return (
+          <li key={u.id} className="bg-white rounded-xl border p-6 shadow-sm">
+            {/* Top bar: Horse name (left) + time (right) */}
+            <div className="flex items-baseline justify-between">
+              <span className="inline-flex items-center px-2 py-0.5 rounded bg-green-50 border border-green-200 text-green-800 text-xs font-semibold">
+                {u.horse?.name || "(Unknown horse)"}
+              </span>
+              <span className="text-xs text-gray-500">{when}</span>
+            </div>
+
+            {/* Title */}
+            <h3 className="mt-2 text-lg font-semibold text-green-900">{u.title}</h3>
+
+            {/* Image (optional) */}
+            {u.image_url && (
               <img
-                src={u.horse.photo_url}
-                alt={u.horse?.name || "Horse"}
-                className="w-16 h-16 object-cover rounded"
+                src={u.image_url}
+                alt=""
+                className="mt-3 w-full max-h-64 object-cover rounded"
               />
             )}
-            <div className="flex-1">
-              <h4 className="font-semibold text-green-900">{u.title}</h4>
-              {u.body && (
-                <p className="text-sm text-gray-700 mt-1 whitespace-pre-wrap">{u.body}</p>
-              )}
-              <p className="text-xs text-gray-500 mt-2">
-                {u.horse?.name ? `${u.horse.name} • ` : ""}
-                {new Date(u.published_at || u.created_at).toLocaleString()}
+
+            {/* Body (optional) */}
+            {u.body && (
+              <p className="text-sm text-gray-700 mt-3 whitespace-pre-wrap">
+                {u.body}
               </p>
-              {u.horse_id && (
-                <div className="mt-2">
-                  <Link
-                    href={`/horses/${u.horse_id}`}
-                    className="px-3 py-1 border rounded text-sm text-green-900 hover:bg-green-50"
+            )}
+
+            {/* Actions */}
+            {u.horse_id && (
+              <div className="mt-4">
+                <Link
+                  href={`/horses/${u.horse_id}`}
+                  className="px-4 py-2 border rounded text-green-900 hover:bg-green-50 text-sm"
+                >
+                  View horse
+                </Link>
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+/* ===========================
+   Renew Tab
+   - Shows renewal windows for horses the user owns
+   - Displays “X days left”
+   - Lets owner record a renewal intent (shares = their current shares by default)
+=========================== */
+function RenewTab({ userId, owned = [] }) {
+  const [loading, setLoading] = useState(true);
+  const [cycles, setCycles] = useState([]);
+
+  // Make sure we don’t crash if owned is undefined or empty
+  const ownedByHorse = useMemo(() => {
+    const safe = Array.isArray(owned) ? owned : [];
+    return Object.fromEntries(
+      safe
+        .filter(o => o && o.horse && o.horse.id)
+        .map(o => [o.horse.id, o.shares || 0])
+    );
+  }, [owned]);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+
+      const safeOwned = Array.isArray(owned) ? owned : [];
+      const horseIds = safeOwned
+        .filter(o => o && o.horse && o.horse.id)
+        .map(o => o.horse.id);
+
+      if (!horseIds.length) {
+        setCycles([]);
+        setLoading(false);
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const { data: rc } = await supabase
+        .from("renew_cycles")
+        .select("id,horse_id,term_label,renew_start,renew_end,status")
+        .in("horse_id", horseIds)
+        .order("renew_end", { ascending: true });
+
+      const list = rc || [];
+
+      // Get horse details
+      const { data: hs } = await supabase
+        .from("horses")
+        .select("id,name,photo_url")
+        .in("id", Array.from(new Set(list.map(r => r.horse_id))));
+
+      const horseMap = Object.fromEntries((hs || []).map(h => [h.id, h]));
+
+      // Which renewals has this user already done?
+      const cycleIds = list.map(r => r.id);
+      const { data: myResp } = await supabase
+        .from("renew_responses")
+        .select("renew_cycle_id")
+        .eq("user_id", userId)
+        .in("renew_cycle_id", cycleIds);
+
+      const renewedSet = new Set((myResp || []).map(x => x.renew_cycle_id));
+
+      const now = Date.now();
+      const enriched = list.map(c => {
+        const startMs = new Date(c.renew_start).getTime();
+        const endMs = new Date(c.renew_end).getTime();
+        const openNow = c.status === "open" && now >= startMs && now <= endMs;
+        const daysLeft = Math.max(0, Math.ceil((endMs - now) / (1000 * 60 * 60 * 24)));
+        return {
+          cycle: c,
+          horse: horseMap[c.horse_id] || { name: "(Horse)" },
+          ownedShares: ownedByHorse[c.horse_id] || 0,
+          alreadyRenewed: renewedSet.has(c.id),
+          openNow,
+          daysLeft,
+        };
+      });
+
+      setCycles(enriched);
+      setLoading(false);
+    })();
+  }, [userId, owned, ownedByHorse]);
+
+  async function renew(c) {
+    if (!c.ownedShares || c.ownedShares <= 0) {
+      alert("You have no shares to renew for this horse.");
+      return;
+    }
+    if (!c.openNow) {
+      alert("This renewal window isn’t currently open.");
+      return;
+    }
+
+    const { error } = await supabase.from("renew_responses").insert({
+      renew_cycle_id: c.cycle.id,
+      user_id: userId,
+      shares: c.ownedShares,
+    });
+
+    if (error) {
+      alert(error.message || "Could not record your renewal.");
+      return;
+    }
+
+    setCycles(items =>
+      items.map(it =>
+        it.cycle.id === c.cycle.id ? { ...it, alreadyRenewed: true } : it
+      )
+    );
+  }
+
+  if (loading) return <p>Loading renewals…</p>;
+  if (!cycles.length)
+    return (
+      <div className="rounded-xl border bg-white p-6 shadow-sm">
+        <h3 className="font-semibold text-green-900">You have no horses to renew yet.</h3>
+        <p className="text-sm text-gray-600 mt-1">
+          When a renewal window opens, it’ll appear here.
+        </p>
+      </div>
+    );
+
+  return (
+    <div className="space-y-4">
+      {cycles.map(c => (
+        <article key={c.cycle.id} className="rounded-xl border bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              {c.horse?.photo_url && (
+                <img
+                  src={c.horse.photo_url}
+                  alt={c.horse?.name || "Horse"}
+                  className="w-14 h-14 rounded object-cover"
+                />
+              )}
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold text-green-900">
+                    {c.horse?.name || "Horse"}
+                  </h3>
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${
+                      c.openNow
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                        : "bg-gray-50 border-gray-200 text-gray-700"
+                    }`}
                   >
-                    View horse
-                  </Link>
+                    {c.openNow
+                      ? "Open"
+                      : c.cycle.status === "closed"
+                      ? "Closed"
+                      : "Scheduled"}
+                  </span>
+                  {c.cycle.term_label && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-50 border border-gray-200 text-gray-700">
+                      {c.cycle.term_label}
+                    </span>
+                  )}
                 </div>
+                <p className="text-xs text-gray-600 mt-1">
+                  {new Date(c.cycle.renew_start).toLocaleString()} →{" "}
+                  {new Date(c.cycle.renew_end).toLocaleString()}
+                </p>
+                <p className="text-sm text-gray-700 mt-2">
+                  You own <strong>{c.ownedShares}</strong> share
+                  {c.ownedShares === 1 ? "" : "s"} in this horse.
+                </p>
+              </div>
+            </div>
+
+            <div className="text-right">
+              {c.openNow && !c.alreadyRenewed ? (
+                <div>
+                  <div className="text-sm text-gray-600 mb-1">
+                    {c.daysLeft > 0 ? (
+                      <>
+                        <strong>{c.daysLeft}</strong> days left to renew
+                      </>
+                    ) : (
+                      "Closes today"
+                    )}
+                  </div>
+                  <button
+                    onClick={() => renew(c)}
+                    disabled={c.ownedShares <= 0}
+                    className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
+                  >
+                    Renew {c.ownedShares} share
+                    {c.ownedShares === 1 ? "" : "s"}
+                  </button>
+                </div>
+              ) : c.alreadyRenewed ? (
+                <span className="inline-flex items-center px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800 text-sm">
+                  ✅ Renewal recorded
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-3 py-1 rounded bg-gray-50 border border-gray-200 text-gray-700 text-sm">
+                  Not open
+                </span>
               )}
             </div>
           </div>
-        </li>
+        </article>
       ))}
-    </ul>
+    </div>
+  );
+}
+/* --- Simple celebratory / consolation graphics --- */
+function WinCard() {
+  return (
+    <div className="rounded-xl border-2 border-emerald-400 bg-emerald-50 p-5 text-center">
+      <div className="text-4xl">🎉🏆</div>
+      <h4 className="mt-2 text-xl font-bold text-emerald-700">Congratulations!</h4>
+      <p className="text-sm text-emerald-800 mt-1">
+        You won this ballot. We’ll be in touch with details shortly.
+      </p>
+    </div>
+  );
+}
+
+function LoseCard() {
+  return (
+    <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-5 text-center">
+      <div className="text-4xl">🎈</div>
+      <h4 className="mt-2 text-xl font-bold text-amber-700">Not this time</h4>
+      <p className="text-sm text-amber-800 mt-1">
+        Better luck next draw — thank you for entering!
+      </p>
+    </div>
+  );
+}
+
+// ---- WalletTab (Recent activity with explicit timestamps & statuses) ----
+function WalletTab({ userId: userIdProp }) {
+  const [loading, setLoading] = useState(true);
+  const [notConfigured, setNotConfigured] = useState(false);
+  const [userId, setUserId] = useState(userIdProp || null);
+
+  const [balance, setBalance] = useState(0);
+  const [activity, setActivity] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false); // 🆕 new state
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const [form, setForm] = useState({
+    amount: "",
+    account_name: "",
+    sort_code: "",
+    account_number: "",
+  });
+
+  useEffect(() => {
+    (async () => {
+      if (!userIdProp) {
+        const { data } = await supabase.auth.getUser();
+        if (data?.user?.id) setUserId(data.user.id);
+      }
+    })();
+  }, [userIdProp]);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setErr("");
+      setNotConfigured(false);
+
+      if (!userId) {
+        setBalance(0);
+        setActivity([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data: tx } = await supabase
+          .from("wallet_transactions")
+          .select("amount, type, status, memo, created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        const txRows = tx || [];
+
+        const postedCredits = txRows
+          .filter(t => t.status === "posted" && t.type === "credit")
+          .reduce((s, t) => s + Number(t.amount || 0), 0);
+        const postedDebits = txRows
+          .filter(t => t.status === "posted" && t.type === "debit")
+          .reduce((s, t) => s + Number(t.amount || 0), 0);
+        setBalance(Math.max(0, postedCredits - postedDebits));
+
+        const creditEvents = txRows
+          .filter(t => t.type === "credit")
+          .map(t => ({
+            kind: "credit",
+            amount: Number(t.amount || 0),
+            memo: t.memo || "Winnings",
+            at: t.created_at,
+          }));
+
+        const { data: wr } = await supabase
+          .from("wallet_withdrawals")
+          .select("id, amount, status, created_at, processed_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        const withdrawalEvents = (wr || []).map(r => ({
+          kind: "withdrawal",
+          amount: Number(r.amount || 0),
+          status: r.status,
+          requested_at: r.created_at,
+          paid_at: r.processed_at || null,
+        }));
+
+        const merged = [...creditEvents, ...withdrawalEvents].sort((a, b) => {
+          const ta = a.kind === "withdrawal" ? a.requested_at : a.at;
+          const tb = b.kind === "withdrawal" ? b.requested_at : b.at;
+          return new Date(tb) - new Date(ta);
+        });
+
+        setActivity(merged.slice(0, 20));
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [userId]);
+
+  function onChange(e) {
+    const { name, value } = e.target;
+    setForm(p => ({ ...p, [name]: value }));
+  }
+
+  async function handleWithdrawSubmit(e) {
+    e.preventDefault();
+    setErr("");
+    setMsg("");
+
+    if (!confirming) {
+      // First click: ask for confirmation
+      setConfirming(true);
+      return;
+    }
+
+    if (notConfigured) return setErr("Wallet isn’t set up yet. Please try again later.");
+    if (!userId) return setErr("Please sign in to request a withdrawal.");
+
+    const amt = Number(form.amount || 0);
+    if (Number.isNaN(amt) || amt <= 0) return setErr("Enter a valid amount.");
+    if (amt < 5) return setErr("Minimum withdrawal is £5.");
+    if (amt > balance) return setErr("You cannot withdraw more than your balance.");
+    if (!form.account_name.trim()) return setErr("Enter the account holder name.");
+
+    const sort = form.sort_code.replace(/[-\s]/g, "");
+    const acct = form.account_number.replace(/\s/g, "");
+    if (!/^\d{6}$/.test(sort)) return setErr("Sort code must be 6 digits.");
+    if (!/^\d{6,10}$/.test(acct)) return setErr("Account number must be 6–10 digits.");
+
+    setSaving(true);
+    try {
+      const { error } = await supabase.rpc("request_withdrawal", {
+        p_amount: amt,
+        p_account_name: form.account_name.trim(),
+        p_sort_code: sort,
+        p_account_number: acct,
+      });
+      if (error) throw error;
+
+      setMsg("✅ Withdrawal requested.");
+      setConfirming(false);
+      setForm({ amount: "", account_name: "", sort_code: "", account_number: "" });
+    } catch (e) {
+      setErr(e.message || "Could not submit request.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function fmtGBP(n) {
+    return Number(n || 0).toFixed(2);
+  }
+  function fmtDate(d) {
+    return new Date(d).toLocaleString();
+  }
+
+  return (
+    <div id="panel-wallet" className="rounded-xl border bg-white p-6 shadow-sm">
+      <h2 className="text-2xl font-bold text-green-900 mb-2">Wallet</h2>
+
+      {loading ? (
+        <p className="text-gray-600">Loading…</p>
+      ) : (
+        <>
+          <div className="grid sm:grid-cols-3 gap-4">
+            <div className="rounded-lg border p-4">
+              <div className="text-xs text-gray-500 uppercase">Balance</div>
+              <div className="text-xl font-bold mt-1">£{fmtGBP(balance)}</div>
+            </div>
+          </div>
+
+          {/* Withdrawals */}
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-green-900">Request withdrawal</h3>
+            <p className="text-xs text-gray-600">
+              Minimum withdrawal is £5. You can withdraw up to your available balance.
+            </p>
+
+            <form onSubmit={handleWithdrawSubmit} className="mt-3 grid gap-3 max-w-lg">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  Amount (£)
+                  <input
+                    name="amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.amount}
+                    onChange={onChange}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                  />
+                </label>
+                <label className="text-sm">
+                  Account name
+                  <input
+                    name="account_name"
+                    value={form.account_name}
+                    onChange={onChange}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                  />
+                </label>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  Sort code (6 digits)
+                  <input
+                    name="sort_code"
+                    inputMode="numeric"
+                    value={form.sort_code}
+                    onChange={onChange}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                    placeholder="e.g. 112233"
+                  />
+                </label>
+                <label className="text-sm">
+                  Account number
+                  <input
+                    name="account_number"
+                    inputMode="numeric"
+                    value={form.account_number}
+                    onChange={onChange}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                    placeholder="e.g. 12345678"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={saving || !userId}
+                  className={`px-4 py-2 text-white rounded ${
+                    confirming
+                      ? "bg-red-700 hover:bg-red-800"
+                      : "bg-green-900 hover:bg-green-950"
+                  } disabled:opacity-50`}
+                >
+                  {saving
+                    ? "Processing…"
+                    : confirming
+                    ? "Confirm withdrawal"
+                    : "Request withdrawal"}
+                </button>
+                <span className="text-xs text-gray-600">
+                  Please double-check all details are correct as any mistakes cannot be rectified.
+                </span>
+              </div>
+
+              {err && <span className="text-sm text-red-700">{err}</span>}
+              {msg && <span className="text-sm text-green-700">{msg}</span>}
+            </form>
+          </div>
+
+          {/* Recent Activity */}
+          <div className="mt-8">
+            <h3 className="text-lg font-semibold text-green-900">Recent activity</h3>
+            {activity.length === 0 ? (
+              <p className="text-sm text-gray-600 mt-1">No activity yet.</p>
+            ) : (
+              <ul className="mt-2 divide-y">
+                {activity.map((ev, i) => {
+                  if (ev.kind === "credit") {
+                    return (
+                      <li key={i} className="py-2">
+                        <div className="font-medium text-emerald-700">+£{fmtGBP(ev.amount)}</div>
+                        {ev.memo && <div className="text-xs text-gray-700 mt-0.5">{ev.memo}</div>}
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          Winnings paid at — {fmtDate(ev.at)}
+                        </div>
+                      </li>
+                    );
+                  } else {
+                    return (
+                      <li key={i} className="py-2">
+                        <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          Withdrawal request made — {fmtDate(ev.requested_at)}
+                        </div>
+                        {ev.paid_at && (
+                          <div className="text-xs text-gray-600">Paid at — {fmtDate(ev.paid_at)}</div>
+                        )}
+                        <div className="text-xs mt-1">
+                          {ev.status === "requested" && (
+                            <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700">
+                              Requested
+                            </span>
+                          )}
+                          {ev.status === "paid" && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
+                              Paid
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  }
+                })}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }

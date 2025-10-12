@@ -3,6 +3,8 @@ import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import Image from "next/image";
+
 
 /* ========= Admin helper ========= */
 const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
@@ -216,11 +218,14 @@ function WelcomeToTheClub() {
           </div>
         </div>
         <div className="overflow-hidden rounded-xl shadow bg-white">
-          <img
-            src="/welcome.jpg"
-            alt="Owners at the races"
-            className="w-full h-80 object-cover"
-          />
+     
+
+<Image
+  src="/homepage-1.jpg"
+  width={1600}
+  height={600}
+  className="w-full h-80 object-cover"
+/>
         </div>
       </div>
     </section>
@@ -306,7 +311,8 @@ function FeaturedHorses() {
     (async () => {
       setLoading(true);
 
-      const { data: featured, error } = await supabase
+      // 1) Try featured first
+      const { data: featured, error: featuredErr } = await supabase
         .from("horses")
         .select(
           "id,name,trainer,specialty,share_price,photo_url,total_shares,featured_position,created_at"
@@ -316,20 +322,23 @@ function FeaturedHorses() {
 
       let data = featured || [];
 
-      if (!error && data.length === 0) {
-        const res = await supabase
+      // 2) Fallback only if there are NO featured results
+      if (!featuredErr && data.length === 0) {
+        const { data: latest } = await supabase
           .from("horses")
           .select(
             "id,name,trainer,specialty,share_price,photo_url,total_shares,created_at"
           )
           .order("created_at", { ascending: false })
           .limit(3);
-        data = res.data || [];
+
+        data = latest || [];
       }
 
       if (!mounted) return;
       setHorses(data);
 
+      // Ownership aggregation
       const ids = data.map((h) => h.id);
       if (ids.length > 0) {
         const { data: owns } = await supabase
@@ -341,8 +350,7 @@ function FeaturedHorses() {
         if (owns) {
           const map = {};
           for (const o of owns) {
-            map[o.horse_id] =
-              (map[o.horse_id] || 0) + (o.shares || 0);
+            map[o.horse_id] = (map[o.horse_id] || 0) + (o.shares || 0);
           }
           setSoldByHorse(map);
         } else {
@@ -373,7 +381,12 @@ function FeaturedHorses() {
       {loading ? (
         <p className="mt-6 text-gray-600">Loading horses…</p>
       ) : horses.length === 0 ? (
-        <p className="mt-6 text-gray-600">No horses to show yet.</p>
+        <>
+          <p className="mt-6 text-gray-600">No horses to show yet.</p>
+          <p className="mt-4 text-xs text-gray-500">
+            We’ve got new horses coming very soon!
+          </p>
+        </>
       ) : (
         <div className="mt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {horses.map((h) => {
@@ -389,9 +402,7 @@ function FeaturedHorses() {
                 className="bg-white rounded-xl shadow hover:shadow-md transition p-4"
               >
                 <img
-                  src={
-                    h.photo_url || "https://placehold.co/640x400?text=Horse"
-                  }
+                  src={h.photo_url || "https://placehold.co/640x400?text=Horse"}
                   alt={h.name}
                   className="w-full h-44 object-cover rounded-lg"
                 />
@@ -442,12 +453,10 @@ function FeaturedHorses() {
           })}
         </div>
       )}
-      <p className="mt-4 text-xs text-gray-500">
-        We have got new horses coming very soon!
-      </p>
     </section>
   );
 }
+
 
 /* ===========================
    WHAT MAKES US DIFFERENT (no extra CTA)

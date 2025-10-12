@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 // src/pages/admin/ballots.js
 import { useEffect, useMemo, useState, useCallback } from "react";
 import Head from "next/head";
@@ -122,30 +123,37 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {/* Cards grid */}
-      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <CreateBallotCard />
-        <RecentBallotsCard />
+     {/* Cards grid */}
+<div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+  <CreateBallotCard />
+  <RecentBallotsCard />
 
-        {/* NEW voting admin cards */}
-        <CreateVoteCard />
-        <ManageVotesCard />
+  {/* NEW voting admin cards */}
+  <CreateVoteCard />
+  <ManageVotesCard />
 
-        <AdminUpdatesCard />
+  {/* Wallet admin tools */}
+<RaceWinningsCreditCard />
+<PayoutRequestsAdminCard />
 
-        {/* All horses list + rich editor */}
-        <AllHorsesCard
-          onEdit={(id) => setEditingHorseId(id)}
-          onCreateNew={() => setEditingHorseId(null)}
-          refreshKey={horsesRefreshKey}
-          onRefreshed={() => {}}
-        />
-        <HorseEditorCard
-          horseId={editingHorseId}
-          setHorseId={setEditingHorseId}
-          onSaved={() => setHorsesRefreshKey((k) => k + 1)}
-        />
-      </div>
+  {/* ✅ Add this */}
+  <ManageRenewalsCard />
+
+  <AdminUpdatesCard />
+
+  {/* All horses list + rich editor */}
+  <AllHorsesCard
+    onEdit={(id) => setEditingHorseId(id)}
+    onCreateNew={() => setEditingHorseId(null)}
+    refreshKey={horsesRefreshKey}
+    onRefreshed={() => {}}
+  />
+  <HorseEditorCard
+    horseId={editingHorseId}
+    setHorseId={setEditingHorseId}
+    onSaved={() => setHorsesRefreshKey((k) => k + 1)}
+  />
+</div>
     </main>
   );
 }
@@ -287,9 +295,10 @@ function CreateBallotCard() {
     </section>
   );
 }
-
 /* ===========================
    Recent ballots (list + status + RUN DRAW via RPC)
+   + horse name display
+   + Edit / Delete inline
 =========================== */
 function RecentBallotsCard() {
   const [items, setItems] = useState([]);
@@ -301,6 +310,30 @@ function RecentBallotsCard() {
   const [entryCounts, setEntryCounts] = useState({});
   const [openRow, setOpenRow] = useState(null);
   const [resultsByBallot, setResultsByBallot] = useState({});
+  const [horseNames, setHorseNames] = useState({});
+
+  // for Edit
+  const [horses, setHorses] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editForm, setEditForm] = useState({
+    type: "badge",
+    horse_id: "",
+    title: "",
+    description: "",
+    event_date: "",
+    cutoff_at: "",
+    max_winners: 1,
+    status: "open",
+  });
+
+  // Load horses once (for edit dropdown)
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("horses").select("id,name").order("name");
+      setHorses(data || []);
+    })();
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -308,7 +341,7 @@ function RecentBallotsCard() {
 
     let query = supabase
       .from("ballots")
-      .select("id,horse_id,type,title,cutoff_at,status,event_date,max_winners")
+      .select("id,horse_id,type,title,cutoff_at,status,event_date,max_winners,description")
       .order("created_at", { ascending: false })
       .limit(30);
 
@@ -317,6 +350,19 @@ function RecentBallotsCard() {
     const { data: ballots } = await query;
     setItems(ballots || []);
 
+    // horse name map
+    const horseIds = Array.from(new Set((ballots || []).map(b => b.horse_id).filter(Boolean)));
+    if (horseIds.length) {
+      const { data: hs } = await supabase
+        .from("horses")
+        .select("id,name")
+        .in("id", horseIds);
+      setHorseNames(Object.fromEntries((hs || []).map(h => [h.id, h.name])));
+    } else {
+      setHorseNames({});
+    }
+
+    // entry counts per ballot
     const ids = (ballots || []).map((b) => b.id);
     if (ids.length > 0) {
       const pairs = await Promise.all(
@@ -378,14 +424,73 @@ function RecentBallotsCard() {
 
       setMessage(`Draw complete. Winners: ${winnersCount ?? 0}.`);
       await load();
-      if (openRow === ballotId) {
-        await loadResults(ballotId);
-      }
+      if (openRow === ballotId) await loadResults(ballotId);
     } catch (e) {
       console.error("Run draw failed:", e);
       alert("Draw failed. Check console and that the DB function/policies exist.");
     } finally {
       setRunning((p) => ({ ...p, [ballotId]: false }));
+    }
+  }
+
+  // ---- Edit helpers ----
+  function beginEdit(b) {
+    setEditingId(b.id);
+    setEditForm({
+      type: b.type || "badge",
+      horse_id: b.horse_id || "",
+      title: b.title || "",
+      description: b.description || "",
+      event_date: b.event_date ? new Date(b.event_date).toISOString().slice(0, 10) : "",
+      cutoff_at: b.cutoff_at ? new Date(b.cutoff_at).toISOString().slice(0, 16) : "",
+      max_winners: b.max_winners ?? 1,
+      status: b.status || "open",
+    });
+  }
+
+  function onEditChange(e) {
+    const { name, value } = e.target;
+    setEditForm((p) => ({ ...p, [name]: value }));
+  }
+
+  async function saveEdit(id) {
+    setEditSaving(true);
+    try {
+      if (!editForm.title.trim()) throw new Error("Please add a title.");
+      if (!editForm.cutoff_at) throw new Error("Please set a cutoff date & time.");
+
+      const payload = {
+        type: editForm.type,
+        horse_id: editForm.horse_id || null,
+        title: editForm.title.trim(),
+        description: editForm.description?.trim() || null,
+        event_date: editForm.event_date ? new Date(editForm.event_date).toISOString() : null,
+        cutoff_at: new Date(editForm.cutoff_at).toISOString(),
+        max_winners: Math.max(1, Number(editForm.max_winners || 0)),
+        status: editForm.status,
+      };
+
+      const { error } = await supabase.from("ballots").update(payload).eq("id", id);
+      if (error) throw error;
+
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      alert(e.message || "Failed to save ballot.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function deleteBallot(id) {
+    if (!confirm("Delete this ballot? This will also remove its entries and results.")) return;
+    try {
+      const { error } = await supabase.rpc("admin_delete_ballot", { p_ballot_id: id });
+      if (error) throw error;
+      await load();
+    } catch (e) {
+      console.error("[deleteBallot]", e);
+      alert(e.message || "Failed to delete ballot.");
     }
   }
 
@@ -395,7 +500,11 @@ function RecentBallotsCard() {
         <h2 className="text-xl font-semibold text-green-900">Recent ballots</h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-600">Filter:</span>
-          <select value={filter} onChange={(e) => setFilter(e.target.value)} className="border rounded px-2 py-1 text-sm">
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          >
             <option value="open">Open</option>
             <option value="closed">Closed</option>
             <option value="drawn">Drawn</option>
@@ -417,70 +526,233 @@ function RecentBallotsCard() {
             const expanded = openRow === b.id;
             const results = resultsByBallot[b.id];
             const isDrawn = b.status === "drawn";
+            const horseName = b.horse_id ? (horseNames[b.horse_id] || "—") : "—";
+            const isEditing = editingId === b.id;
 
             return (
               <li key={b.id} className="py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-medium">
-                      {b.title}{" "}
-                      <span className="text-xs text-gray-500">
-                        ({b.type}) {b.event_date ? `• ${new Date(b.event_date).toLocaleDateString()}` : ""}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Closes {new Date(b.cutoff_at).toLocaleString()} • Status:{" "}
-                      <span className="uppercase tracking-wide font-semibold">{b.status}</span>{" "}
-                      • Entries: <strong>{entries}</strong>
-                    </div>
-                  </div>
+                {!isEditing ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium">
+                          {b.title}{" "}
+                          <span className="text-xs text-gray-500">
+                            ({b.type}) {b.event_date ? `• ${new Date(b.event_date).toLocaleDateString()}` : ""}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Horse: <strong>{horseName}</strong> • Closes {new Date(b.cutoff_at).toLocaleString()} • Status:{" "}
+                          <span className="uppercase tracking-wide font-semibold">{b.status}</span>{" "}
+                          • Entries: <strong>{entries}</strong>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-2">
-                    <button onClick={() => updateStatus(b.id, "open")} disabled={updating[b.id]} className="px-3 py-1 border rounded text-sm hover:bg-gray-50">Open</button>
-                    <button onClick={() => updateStatus(b.id, "closed")} disabled={updating[b.id]} className="px-3 py-1 border rounded text-sm hover:bg-gray-50">Close</button>
-                    <button
-                      onClick={() => runDraw(b.id)}
-                      disabled={running[b.id] || isDrawn}
-                      className="px-3 py-1 border rounded text-sm hover:bg-gray-50 disabled:opacity-50"
-                      title={isDrawn ? "Already drawn" : "Run draw"}
-                    >
-                      {running[b.id] ? "Running…" : "Run draw"}
-                    </button>
-                    {isDrawn && (
-                      <button
-                        onClick={async () => {
-                          const next = expanded ? null : b.id;
-                          setOpenRow(next);
-                          if (next && !resultsByBallot[b.id]) await loadResults(b.id);
-                        }}
-                        className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
-                      >
-                        {expanded ? "Hide winners" : "View winners"}
-                      </button>
+                      {/* Actions row */}
+                      <div className="flex items-center gap-2">
+                        {/* Show OPEN only when currently closed (and not drawing/drawn) */}
+                        {b.status === "closed" && !running[b.id] && !isDrawn && (
+                          <button
+                            onClick={() => updateStatus(b.id, "open")}
+                            disabled={updating[b.id]}
+                            className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                          >
+                            Open
+                          </button>
+                        )}
+
+                        {/* Show CLOSE only when currently open (and not drawing/drawn) */}
+                        {b.status === "open" && !running[b.id] && !isDrawn && (
+                          <button
+                            onClick={() => updateStatus(b.id, "closed")}
+                            disabled={updating[b.id]}
+                            className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                          >
+                            Close
+                          </button>
+                        )}
+
+                        {/* Run draw (only available when not drawn yet) */}
+                        <button
+                          onClick={() => runDraw(b.id)}
+                          disabled={running[b.id] || isDrawn}
+                          className="px-3 py-1 border rounded text-sm hover:bg-gray-50 disabled:opacity-50"
+                          title={isDrawn ? "Already drawn" : "Run draw"}
+                        >
+                          {running[b.id] ? "Running…" : "Run draw"}
+                        </button>
+
+                        {/* Winners toggle appears only after draw is complete */}
+                        {isDrawn && (
+                          <button
+                            onClick={async () => {
+                              const next = expanded ? null : b.id;
+                              setOpenRow(next);
+                              if (next && !resultsByBallot[b.id]) await loadResults(b.id);
+                            }}
+                            className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                          >
+                            {expanded ? "Hide winners" : "View winners"}
+                          </button>
+                        )}
+
+                        {/* Edit / Delete */}
+                        <button
+                          onClick={() => beginEdit(b)}
+                          className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteBallot(b.id)}
+                          className="px-3 py-1 border rounded text-sm text-red-700 hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+
+                    {expanded && (
+                      <div className="mt-3 ml-1 rounded-lg border bg-gray-50 p-3">
+                        {!results ? (
+                          <p className="text-sm text-gray-600">Loading results…</p>
+                        ) : results.winners.length === 0 ? (
+                          <p className="text-sm text-gray-600">
+                            No winners recorded for this draw.
+                            {entries > 0 ? ` (${results.unsuccessfulCount} unsuccessful entries)` : ""}
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-sm text-gray-800 font-medium">Winners ({results.winners.length})</p>
+                            <ul className="mt-1 text-sm text-gray-800 list-disc list-inside">
+                              {results.winners.map((uid) => (
+                                <li key={uid}><span className="font-mono text-xs">{uid}</span></li>
+                              ))}
+                            </ul>
+                            <p className="text-xs text-gray-600 mt-2">Unsuccessful entries: {results.unsuccessfulCount}</p>
+                          </>
+                        )}
+                      </div>
                     )}
-                  </div>
-                </div>
-
-                {expanded && (
-                  <div className="mt-3 ml-1 rounded-lg border bg-gray-50 p-3">
-                    {!results ? (
-                      <p className="text-sm text-gray-600">Loading results…</p>
-                    ) : results.winners.length === 0 ? (
-                      <p className="text-sm text-gray-600">
-                        No winners recorded for this draw.
-                        {entries > 0 ? ` (${results.unsuccessfulCount} unsuccessful entries)` : ""}
-                      </p>
-                    ) : (
-                      <>
-                        <p className="text-sm text-gray-800 font-medium">Winners ({results.winners.length})</p>
-                        <ul className="mt-1 text-sm text-gray-800 list-disc list-inside">
-                          {results.winners.map((uid) => (
-                            <li key={uid}><span className="font-mono text-xs">{uid}</span></li>
+                  </>
+                ) : (
+                  // Inline edit card
+                  <div className="rounded-lg border bg-gray-50 p-3">
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <label className="text-sm">
+                        Type
+                        <select
+                          name="type"
+                          value={editForm.type}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        >
+                          <option value="badge">Owners’ badges</option>
+                          <option value="stable">Stable visit</option>
+                        </select>
+                      </label>
+                      <label className="text-sm">
+                        Horse (optional)
+                        <select
+                          name="horse_id"
+                          value={editForm.horse_id}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        >
+                          <option value="">— None —</option>
+                          {horses.map((h) => (
+                            <option key={h.id} value={h.id}>{h.name}</option>
                           ))}
-                        </ul>
-                        <p className="text-xs text-gray-600 mt-2">Unsuccessful entries: {results.unsuccessfulCount}</p>
-                      </>
-                    )}
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="text-sm block mt-2">
+                      Title
+                      <input
+                        name="title"
+                        value={editForm.title}
+                        onChange={onEditChange}
+                        className="mt-1 w-full border rounded px-3 py-2"
+                      />
+                    </label>
+
+                    <label className="text-sm block mt-2">
+                      Description
+                      <textarea
+                        name="description"
+                        value={editForm.description}
+                        onChange={onEditChange}
+                        rows={3}
+                        className="mt-1 w-full border rounded px-3 py-2"
+                      />
+                    </label>
+
+                    <div className="grid sm:grid-cols-3 gap-3 mt-2">
+                      <label className="text-sm">
+                        Event date
+                        <input
+                          type="date"
+                          name="event_date"
+                          value={editForm.event_date}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        />
+                      </label>
+                      <label className="text-sm">
+                        Cutoff (local)
+                        <input
+                          type="datetime-local"
+                          name="cutoff_at"
+                          value={editForm.cutoff_at}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        />
+                      </label>
+                      <label className="text-sm">
+                        Winners
+                        <input
+                          type="number"
+                          name="max_winners"
+                          min={1}
+                          value={editForm.max_winners}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                      <label className="text-sm">
+                        Status
+                        <select
+                          name="status"
+                          value={editForm.status}
+                          onChange={onEditChange}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        >
+                          <option value="open">Open</option>
+                          <option value="closed">Closed</option>
+                          <option value="drawn">Drawn</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => saveEdit(b.id)}
+                        disabled={editSaving}
+                        className="px-3 py-1 bg-green-900 text-white rounded text-sm disabled:opacity-50"
+                      >
+                        {editSaving ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="px-3 py-1 border rounded text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 )}
               </li>
@@ -537,7 +809,7 @@ function AdminUpdatesCard() {
       .from("horse_updates")
       .select("id, horse_id, title, body, image_url, published_at, created_at")
       .order("published_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
+.order("id", { ascending: false })
       .limit(20);
 
     if (error) {
@@ -1819,6 +2091,769 @@ function ManageVotesCard() {
               </li>
             );
           })}
+        </ul>
+      )}
+    </section>
+  );
+}
+/* ===========================
+   RENEWALS (ADMIN) — horse name + shares count + edit/delete + process (persisted)
+=========================== */
+function ManageRenewalsCard() {
+  const [horses, setHorses] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  // processing UI
+  const [processingId, setProcessingId] = useState(null);
+
+  // create form
+  const [form, setForm] = useState({
+    horse_id: "",
+    term_label: "",
+    renew_start: "",
+    renew_end: "",
+    notes: "",
+  });
+
+  // edit form
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    horse_id: "",
+    term_label: "",
+    renew_start: "",
+    renew_end: "",
+    notes: "",
+    status: "open",
+  });
+
+  useEffect(() => {
+    (async () => {
+      const { data: hs } = await supabase
+        .from("horses")
+        .select("id,name")
+        .order("name");
+      setHorses(hs || []);
+      await load();
+    })();
+  }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("renew_cycles")
+        .select("id,horse_id,term_label,renew_start,renew_end,status,notes,created_at,processed_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      const list = data || [];
+      if (list.length === 0) {
+        setRows([]);
+        return;
+      }
+
+      // horse_id -> name
+      const horseIds = Array.from(new Set(list.map(r => r.horse_id))).filter(Boolean);
+      let horseMap = {};
+      if (horseIds.length) {
+        const { data: hs } = await supabase
+          .from("horses")
+          .select("id,name")
+          .in("id", horseIds);
+        horseMap = Object.fromEntries((hs || []).map(h => [h.id, h.name]));
+      }
+
+      // sum renewed shares per cycle
+      const ids = list.map(r => r.id);
+      let sharesByCycle = {};
+      if (ids.length) {
+        const { data: resp, error: rErr } = await supabase
+          .from("renew_responses")
+          .select("renew_cycle_id, shares")
+          .in("renew_cycle_id", ids);
+        if (rErr) throw rErr;
+
+        sharesByCycle = (resp || []).reduce((acc, r) => {
+          const n = Number(r.shares ?? 0);
+          acc[r.renew_cycle_id] = (acc[r.renew_cycle_id] || 0) + n;
+          return acc;
+        }, {});
+      }
+
+      setRows(
+        list.map(r => ({
+          ...r,
+          horse_name: horseMap[r.horse_id] || "(Unknown horse)",
+          renew_count: sharesByCycle[r.id] || 0, // total shares renewed
+        }))
+      );
+    } catch (e) {
+      console.error("[ManageRenewalsCard] load error:", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onChange(e) {
+    const { name, value } = e.target;
+    setForm(p => ({ ...p, [name]: value }));
+  }
+
+  async function createCycle(e) {
+    e.preventDefault();
+    setSaving(true);
+    setMsg("");
+    try {
+      if (!form.horse_id) throw new Error("Select a horse");
+      if (!form.renew_start || !form.renew_end) throw new Error("Set start/end dates");
+      const payload = {
+        horse_id: form.horse_id,
+        term_label: form.term_label?.trim() || null,
+        renew_start: new Date(form.renew_start).toISOString(),
+        renew_end: new Date(form.renew_end).toISOString(),
+        notes: form.notes?.trim() || null,
+        status: "open",
+      };
+      const { error } = await supabase.from("renew_cycles").insert(payload);
+      if (error) throw error;
+
+      setMsg("✅ Renewal window created & opened.");
+      setForm({ horse_id: "", term_label: "", renew_start: "", renew_end: "", notes: "" });
+      await load();
+    } catch (e) {
+      alert(e.message || "Failed to create renewal");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function beginEdit(row) {
+    setEditingId(row.id);
+    setEditForm({
+      horse_id: row.horse_id || "",
+      term_label: row.term_label || "",
+      renew_start: row.renew_start ? new Date(row.renew_start).toISOString().slice(0, 16) : "",
+      renew_end: row.renew_end ? new Date(row.renew_end).toISOString().slice(0, 16) : "",
+      notes: row.notes || "",
+      status: row.status || "open",
+    });
+  }
+
+  async function saveEdit(id) {
+    try {
+      if (!editForm.horse_id) throw new Error("Select a horse");
+      if (!editForm.renew_start || !editForm.renew_end) throw new Error("Set start/end dates");
+      const payload = {
+        horse_id: editForm.horse_id,
+        term_label: editForm.term_label?.trim() || null,
+        renew_start: new Date(editForm.renew_start).toISOString(),
+        renew_end: new Date(editForm.renew_end).toISOString(),
+        notes: editForm.notes?.trim() || null,
+        status: editForm.status,
+      };
+      const { error } = await supabase.from("renew_cycles").update(payload).eq("id", id);
+      if (error) throw error;
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      alert(e.message || "Failed to save changes");
+    }
+  }
+
+  async function closeCycle(id) {
+    if (!confirm("Close this renewal window?")) return;
+    const { error } = await supabase.from("renew_cycles").update({ status: "closed" }).eq("id", id);
+    if (error) return alert(error.message || "Failed to close.");
+    await load();
+  }
+
+  async function deleteCycle(id) {
+    if (!confirm("Delete this renewal window? This cannot be undone.")) return;
+    const { error } = await supabase.from("renew_cycles").delete().eq("id", id);
+    if (error) return alert(error.message || "Failed to delete.");
+    await load();
+  }
+
+  // Apply renew decisions to ownerships (RPC), then persist processed_at so it sticks after reload
+  async function processCycle(id) {
+    // Already processed? (DB-backed)
+    const row = rows.find(r => r.id === id);
+    if (row?.processed_at) return;
+
+    if (
+      !confirm(
+        "This will update ownerships for this renewal window:\n" +
+        "• Set each owner’s shares to the renewed amount\n" +
+        "• Delete owners who didn’t renew\n\nProceed?"
+      )
+    ) return;
+
+    setProcessingId(id);
+    try {
+      // 1) Run your SQL function that adjusts ownerships
+      const { data, error } = await supabase.rpc("process_renew_cycle", { p_cycle_id: id });
+      if (error) throw error;
+
+      // 2) Mark as processed in DB so UI persists after refresh
+      const { error: markErr } = await supabase
+        .from("renew_cycles")
+        .update({
+          processed_at: new Date().toISOString(),
+          // processed_by: (await supabase.auth.getUser())?.data?.user?.id || null, // if you added processed_by
+        })
+        .eq("id", id);
+      if (markErr) throw markErr;
+
+      // 3) Show summary
+      const summary = (data || []).map(r => `${r.action}: ${r.affected}`).join("\n");
+      alert(`✅ Processing complete.\n\n${summary}`);
+
+      await load(); // will now show the button as "Processed" (disabled)
+    } catch (e) {
+      alert(e.message || "Failed to process renewals.");
+    } finally {
+      setProcessingId(null);
+    }
+  }
+
+  return (
+    <section className="bg-white rounded-xl border shadow-sm p-6">
+      <h2 className="text-xl font-semibold text-green-900">Renewals</h2>
+      <p className="text-sm text-gray-600 mt-1">
+        Create, edit, close or delete renewal windows after a syndicate term ends.
+      </p>
+
+      {/* Create */}
+      <form onSubmit={createCycle} className="mt-4 grid gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="text-sm">
+            Horse
+            <select
+              name="horse_id"
+              value={form.horse_id}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              required
+            >
+              <option value="">— Select horse —</option>
+              {horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">
+            Term label (optional)
+            <input
+              name="term_label"
+              value={form.term_label}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              placeholder="2025 Season"
+            />
+          </label>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="text-sm">
+            Renew start
+            <input
+              type="datetime-local"
+              name="renew_start"
+              value={form.renew_start}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              required
+            />
+          </label>
+          <label className="text-sm">
+            Renew end
+            <input
+              type="datetime-local"
+              name="renew_end"
+              value={form.renew_end}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              required
+            />
+          </label>
+        </div>
+
+        <label className="text-sm">
+          Notes (optional)
+          <textarea
+            name="notes"
+            value={form.notes}
+            onChange={onChange}
+            rows={2}
+            className="mt-1 w-full border rounded px-3 py-2"
+          />
+        </label>
+
+        <div className="flex items-center gap-3">
+          <button type="submit" disabled={saving} className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50">
+            {saving ? "Creating…" : "Create & open renewal"}
+          </button>
+          {msg && <span className="text-sm">{msg}</span>}
+        </div>
+      </form>
+
+      {/* List / Edit */}
+      <div className="mt-8">
+        <h3 className="font-semibold text-green-900">Recent renewal windows</h3>
+        {loading ? (
+          <p className="mt-2 text-gray-600">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="mt-2 text-gray-600">No renewal windows yet.</p>
+        ) : (
+          <ul className="mt-3 divide-y">
+            {rows.map(r => {
+              const editing = editingId === r.id;
+              const processed = Boolean(r.processed_at);
+
+              return (
+                <li key={r.id} className="py-3">
+                  {!editing ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium">
+                          {r.horse_name} — {r.term_label || "(No label)"} • {r.status.toUpperCase()}
+                          {processed && <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded bg-gray-100 border">Processed</span>}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {r.renew_count} share{r.renew_count === 1 ? "" : "s"} renewed
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {new Date(r.renew_start).toLocaleString()} → {new Date(r.renew_end).toLocaleString()}
+                        </div>
+                        {r.notes && <div className="text-xs text-gray-600 mt-1">{r.notes}</div>}
+                      </div>
+
+                      <div className="flex gap-2">
+                        {r.status === "open" && (
+                          <button
+                            onClick={() => closeCycle(r.id)}
+                            className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                          >
+                            Close
+                          </button>
+                        )}
+
+                        {r.status === "closed" && (
+                          <button
+                            onClick={() => processCycle(r.id)}
+                            disabled={processed || processingId === r.id}
+                            className={`px-3 py-1 border rounded text-sm ${
+                              processed ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                              : processingId === r.id ? "opacity-70 cursor-wait"
+                              : "hover:bg-gray-50"
+                            }`}
+                            title={processed ? "Already processed" : "Apply renew decisions to ownerships"}
+                          >
+                            {processed ? "Processed" : (processingId === r.id ? "Processing…" : "Process Non-Renewals")}
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => beginEdit(r)}
+                          className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteCycle(r.id)}
+                          className="px-3 py-1 border rounded text-sm text-red-700 hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border bg-gray-50 p-3">
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        <label className="text-sm">
+                          Horse
+                          <select
+                            value={editForm.horse_id}
+                            onChange={e => setEditForm(p => ({ ...p, horse_id: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          >
+                            <option value="">— Select horse —</option>
+                            {horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                          </select>
+                        </label>
+                        <label className="text-sm">
+                          Term label
+                          <input
+                            value={editForm.term_label}
+                            onChange={e => setEditForm(p => ({ ...p, term_label: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="grid sm:grid-cols-3 gap-3 mt-2">
+                        <label className="text-sm">
+                          Start
+                          <input
+                            type="datetime-local"
+                            value={editForm.renew_start}
+                            onChange={e => setEditForm(p => ({ ...p, renew_start: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          End
+                          <input
+                            type="datetime-local"
+                            value={editForm.renew_end}
+                            onChange={e => setEditForm(p => ({ ...p, renew_end: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          Status
+                          <select
+                            value={editForm.status}
+                            onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          >
+                            <option value="open">Open</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <label className="text-sm mt-2 block">
+                        Notes
+                        <textarea
+                          rows={2}
+                          value={editForm.notes}
+                          onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
+                          className="mt-1 w-full border rounded px-3 py-2"
+                        />
+                      </label>
+
+                      <div className="mt-3 flex gap-2">
+                        <button onClick={() => saveEdit(r.id)} className="px-3 py-1 bg-green-900 text-white rounded text-sm">
+                          Save
+                        </button>
+                        <button onClick={() => setEditingId(null)} className="px-3 py-1 border rounded text-sm">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ===========================
+   Race Winnings — credit owners per share
+=========================== */
+function RaceWinningsCreditCard() {
+  const [horses, setHorses] = useState([]);
+  const [horseId, setHorseId] = useState("");
+  const [perShare, setPerShare] = useState("2.00"); // default £2
+  const [memo, setMemo] = useState("Race winnings");
+  const [preview, setPreview] = useState([]); // [{user_id, shares, amount}]
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("horses").select("id,name").order("name");
+      setHorses(data || []);
+    })();
+  }, []);
+
+  async function buildPreview(id, rate) {
+    setLoading(true);
+    setPreview([]);
+    setErr("");
+    try {
+      // Expect ownerships table: user_id, horse_id, shares
+      const { data: owns, error } = await supabase
+        .from("ownerships")
+        .select("user_id, shares")
+        .eq("horse_id", id);
+
+      if (error) throw error;
+      const r = Number(rate || 0);
+      const rows = (owns || []).map(o => ({
+        user_id: o.user_id,
+        shares: Number(o.shares || 0),
+        amount: Number((Number(o.shares || 0) * r).toFixed(2)),
+      })).filter(x => x.shares > 0 && x.amount > 0);
+
+      setPreview(rows);
+    } catch (e) {
+      console.error("[RaceWinningsCreditCard] preview error:", e);
+      setErr(e.message || "Could not load owners.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (horseId && perShare) buildPreview(horseId, perShare);
+  }, [horseId, perShare]);
+
+  async function creditAll() {
+    setSaving(true);
+    setErr("");
+    setMsg("");
+    try {
+      if (!horseId) throw new Error("Pick a horse");
+      const r = Number(perShare || 0);
+      if (r <= 0) throw new Error("Enter a valid per-share amount");
+
+      if (preview.length === 0) {
+        setMsg("No owners to credit.");
+        setSaving(false);
+        return;
+      }
+
+      // Insert one credit transaction per owner
+      const payload = preview.map(p => ({
+        user_id: p.user_id,
+        amount: p.amount,
+        type: "credit",
+        status: "posted",
+        memo: `${memo} — per share £${r.toFixed(2)}`,
+      }));
+
+      const { error } = await supabase.from("wallet_transactions").insert(payload);
+      if (error) throw error;
+
+      setMsg(`✅ Credited ${preview.length} owners.`);
+    } catch (e) {
+      console.error("[RaceWinningsCreditCard] credit error:", e);
+      setErr(e.message || "Failed to credit owners.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const total = preview.reduce((s, x) => s + x.amount, 0);
+
+  return (
+    <section className="bg-white rounded-xl border shadow-sm p-6">
+      <h2 className="text-xl font-semibold text-green-900">Race winnings — credit owners</h2>
+      <p className="text-sm text-gray-600 mt-1">
+        Credit all owners of a horse by a fixed amount <em>per share</em>. Example: Golden Gallop @ £2/share.
+      </p>
+
+      <div className="grid sm:grid-cols-3 gap-3 mt-3">
+        <label className="text-sm">
+          Horse
+          <select
+            value={horseId}
+            onChange={e => setHorseId(e.target.value)}
+            className="mt-1 w-full border rounded px-3 py-2"
+          >
+            <option value="">— Select horse —</option>
+            {horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm">
+          £ per share
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={perShare}
+            onChange={e => setPerShare(e.target.value)}
+            className="mt-1 w-full border rounded px-3 py-2"
+            placeholder="2.00"
+          />
+        </label>
+        <label className="text-sm">
+          Memo (optional)
+          <input
+            value={memo}
+            onChange={e => setMemo(e.target.value)}
+            className="mt-1 w-full border rounded px-3 py-2"
+            placeholder="Race winnings"
+          />
+        </label>
+      </div>
+
+      {loading ? (
+        <p className="mt-3 text-gray-600">Loading owners…</p>
+      ) : preview.length === 0 ? (
+        <p className="mt-3 text-gray-600">No preview yet.</p>
+      ) : (
+        <div className="mt-4">
+          <div className="text-sm text-gray-700 mb-2">
+            Preview: {preview.length} owners • Total credit £{total.toFixed(2)}
+          </div>
+          <ul className="max-h-48 overflow-auto rounded border divide-y">
+            {preview.map(p => (
+              <li key={p.user_id} className="px-3 py-2 text-sm flex justify-between">
+                <span><span className="font-mono">{p.user_id}</span> • {p.shares} shares</span>
+                <span>£{p.amount.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={creditAll}
+          disabled={saving || !horseId || preview.length === 0}
+          className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
+        >
+          {saving ? "Crediting…" : "Credit owners"}
+        </button>
+        {err && <span className="text-sm text-red-700">{err}</span>}
+        {msg && <span className="text-sm text-green-700">{msg}</span>}
+      </div>
+    </section>
+  );
+}
+
+/* ===========================
+   Payout Requests (admin)
+=========================== */
+function PayoutRequestsAdminCard() {
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [updating, setUpdating] = useState({});
+  const [filter, setFilter] = useState("all"); // requested|paid|all
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // OPTIONAL one-time debug (uncomment if you need to verify admin context)
+      // const { data: dbg } = await supabase.rpc("debug_admin_ctx");
+      // console.log("[wallet admin debug]", dbg);
+
+      let q = supabase
+        .from("wallet_withdrawals")
+        .select("id, user_id, amount, status, account_name, sort_code, account_number, reference, created_at, processed_at")
+        .order("created_at", { ascending: false })
+        .limit(100);
+
+      if (filter !== "all") q = q.eq("status", filter);
+
+      const { data, error } = await q;
+      if (error) throw error;
+      setRows(data || []);
+    } catch (e) {
+      console.error("[PayoutRequestsAdminCard] load error:", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [filter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function fmtGBP(amount) {
+    return Number(amount || 0).toFixed(2);
+  }
+
+  async function markPaid(id) {
+    if (!confirm("Mark this payout as PAID?")) return;
+    setUpdating(p => ({ ...p, [id]: true }));
+    try {
+      const { error } = await supabase
+        .from("wallet_withdrawals")
+        .update({ status: "paid", processed_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+
+      // Optionally email user here via your API route
+      // await fetch("/api/notify-paid", { method:"POST", body: JSON.stringify({ id }) })
+
+      await load();
+    } catch (e) {
+      alert(e.message || "Failed to update.");
+    } finally {
+      setUpdating(p => ({ ...p, [id]: false }));
+    }
+  }
+
+  return (
+    <section className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold text-green-900">Payout requests</h2>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Filter:</span>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            <option value="requested">Requested</option>
+            <option value="paid">Paid</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="mt-3 text-gray-600">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-3 text-gray-600">No payout requests.</p>
+      ) : (
+        <ul className="mt-4 divide-y">
+          {rows.map(r => (
+            <li key={r.id} className="py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-sm">
+                  <div className="font-medium">
+                    £{fmtGBP(r.amount)} • {new Date(r.created_at).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    User: <span className="font-mono">{r.user_id}</span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {r.account_name} • Sort: {r.sort_code} • Acc: {r.account_number}
+                    {r.reference ? <> • Ref: {r.reference}</> : null}
+                  </div>
+                  <div className="text-xs mt-1">
+                    Status:{" "}
+                    {r.status === "requested" && (
+                      <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700">
+                        Requested
+                      </span>
+                    )}
+                    {r.status === "paid" && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
+                        Paid
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {r.status === "requested" && (
+                    <button
+                      onClick={() => markPaid(r.id)}
+                      disabled={updating[r.id]}
+                      className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                    >
+                      {updating[r.id] ? "Updating…" : "Mark paid"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </li>
+          ))}
         </ul>
       )}
     </section>

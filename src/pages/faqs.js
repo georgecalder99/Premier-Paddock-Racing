@@ -15,7 +15,7 @@ const SECTIONS = [
     items: [
       {
         q: "What does a share include?",
-        a: "Proportional ownership for the term, trainer updates, access to owners' badge ballots on race days, stable visit ballots, and a modern owner portal (My Paddock) to track it all.",
+        a: "Proportional ownership for the term, trainer updates, access to owners' badge ballots on UK race days, stable visit ballots, and a modern owner portal (My Paddock) to track it all. Some of our syndicates may be leases, so you won't own a share in the horse, but will still get all the ownership benefits.",
       },
       {
         q: "How do I buy shares?",
@@ -23,7 +23,7 @@ const SECTIONS = [
       },
       {
         q: "Do I need to be based in the UK?",
-        a: "You can purchase from abroad; race-day badges and yard visits are UK-based. Travel and attendance are at your own arrangement.",
+        a: "Yes. Premier Paddock Racing operates in the UK only. All purchases, owners' badges, and yard visits are UK-based.",
       },
       {
         q: "Is there a minimum age?",
@@ -46,7 +46,7 @@ const SECTIONS = [
       },
       {
         q: "Can I sell or transfer my shares?",
-        a: "A member-to-member transfer feature is planned. Until then, shares are not transferable by default.",
+        a: "A member-to-member transfer feature is planned. Until then, shares are not transferable by default. This would not be available for lease shares.",
       },
       {
         q: "How long does my ownership last?",
@@ -64,6 +64,29 @@ const SECTIONS = [
         q: "What if the trainer changes?",
         a: "If a yard change is in the horse's best interest, we will explain the rationale, the new plan, and any impact on owners. We aim to minimise disruption and keep communications clear.",
       },
+      {
+        q: "What is the difference between purchasing and leasing a share?",
+        a: "A purchase share grants full ownership for the syndicate term, including prize money and any sale proceeds. A lease share provides the same ownership experience and prize money, but without ownership rights or sale entitlement. It will be made clear when purchasing which you are buying.",
+      },
+    ],
+  },
+
+  {
+    id: "leased-syndicates",
+    title: "Leased syndicates explained",
+    items: [
+      {
+        q: "What is a leased syndicate?",
+        a: "A leased syndicate gives you the full owner experience — prize money, updates, badges, and stable visits — without actually buying the share. You’re leasing the experience for a fixed term within the UK.",
+      },
+      {
+        q: "Do leased owners still get prize money?",
+        a: "Yes. Leased owners receive their share of prize money and enjoy all the same ownership benefits throughout the term.",
+      },
+      {
+        q: "Can I convert a lease to a purchase later?",
+        a: "If that option becomes available for a specific horse, we’ll make it clear in My Paddock or on the horse’s page. Most leased syndicates remain lease-only for their term.",
+      },
     ],
   },
 
@@ -73,11 +96,11 @@ const SECTIONS = [
     items: [
       {
         q: "How do owners' badge ballots work?",
-        a: "When a horse is declared, entries open in My Paddock. After the deadline, winners are drawn fairly based on the racecourse allocation. Winners are notified in-app and by email.",
+        a: "When a UK race is declared, entries open in My Paddock. After the deadline, winners are drawn fairly based on the racecourse allocation. Winners are notified in-app and by email.",
       },
       {
         q: "How do stable visit ballots work?",
-        a: "We host regular stable visits with limited places. Entries open in My Paddock; after the cutoff, places are drawn fairly and confirmed to winners.",
+        a: "We host regular UK stable visits with limited places. Entries open in My Paddock; after the cutoff, places are drawn fairly and confirmed to winners.",
       },
       {
         q: "Can I bring guests to a race day or yard visit?",
@@ -112,7 +135,7 @@ const SECTIONS = [
       },
       {
         q: "What aftercare is provided if the horse retires?",
-        a: "We prioritise responsible aftercare and suitable rehoming in line with industry best practice. We will communicate the process and outcome to owners.",
+        a: "We prioritise responsible aftercare and suitable rehoming in line with UK industry best practice. We will communicate the process and outcome to owners.",
       },
     ],
   },
@@ -123,15 +146,15 @@ const SECTIONS = [
     items: [
       {
         q: "Are there ongoing fees?",
-        a: "Some horses are all-in for the term; others may have monthly training contributions. Each horse page clearly shows the pricing model before you buy.",
+        a: "No, all horses are all-in for the term. Each horse page clearly shows the pricing breakdown before you buy.",
       },
       {
         q: "How is prize money handled?",
-        a: "Prize money (net of applicable deductions/fees) is distributed proportionally. We will display distributions and statements in My Paddock (member wallet coming soon).",
+        a: "Prize money (net of applicable deductions/fees) is distributed proportionally. We will display distributions within the member wallet in My Paddock.",
       },
       {
         q: "Do you charge VAT or other taxes?",
-        a: "Pricing and any applicable taxes will be shown on the horse page or at checkout. If VAT applies, we will make that clear.",
+        a: "Pricing and any applicable UK taxes (including VAT, where applicable) will be shown on the horse page or at checkout.",
       },
       {
         q: "Can I get a refund or cancel my purchase?",
@@ -146,15 +169,15 @@ const SECTIONS = [
     items: [
       {
         q: "How often do trainer updates happen?",
-        a: "We aim for weekly updates, plus whenever there are entries, declarations, or meaningful developments. Updates appear in My Paddock and key items may be emailed.",
+        a: "We aim for weekly updates, plus whenever there are entries, declarations, or meaningful developments. Updates appear in My Paddock and key information will be emailed.",
       },
       {
         q: "What is shown in My Paddock?",
-        a: "Your owned shares, live ballot entries/results, trainer updates, and (coming soon) prize money statements and wallet.",
+        a: "Your owned shares, live ballot entries/results, trainer updates, and your wallet.",
       },
       {
         q: "Will I get notifications?",
-        a: "Yes. We send important updates via email and highlight them in My Paddock. You can control your notification preferences in your account (where available).",
+        a: "Yes. We send important updates via email and they will also be available in My Paddock.",
       },
     ],
   },
@@ -165,7 +188,7 @@ const SECTIONS = [
     items: [
       {
         q: "Who owns the horse?",
-        a: "The syndicate owns the horse per the defined term and share structure. Your share grants you proportional beneficial interest as outlined in the syndicate terms.",
+        a: "The syndicate owns the horse per the defined term and share structure. Some of our syndicates are leases, so you won’t own a part of the horse, but will enjoy all owner benefits.",
       },
       {
         q: "Can I use photos and videos of the horse?",

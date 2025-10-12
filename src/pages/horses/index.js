@@ -232,7 +232,7 @@ export default function HorsesPage() {
           {loading ? (
             <p className="text-gray-600">Loading horses…</p>
           ) : horsesWithComputed.length === 0 ? (
-            <p className="text-gray-600">No horses listed yet. Add some in Supabase.</p>
+            <p className="text-gray-600">No horses listed yet. Sign up on our homepage to be the first to know when we launch!.</p>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {horsesWithComputed.map((h) => {

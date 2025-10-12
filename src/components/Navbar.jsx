@@ -1,10 +1,10 @@
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image"; // ✅ Add this import
 import { useRouter } from "next/router";
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
-  const [importantOpen, setImportantOpen] = useState(false); // dropdown toggle
   const router = useRouter();
 
   const links = [
@@ -16,12 +16,6 @@ export default function Navbar() {
     { href: "/contact-us", label: "Contact us" },
   ];
 
-  const importantLinks = [
-    { href: "/important/terms", label: "Terms & Conditions" },
-    { href: "/important/privacy", label: "Privacy Policy" },
-    { href: "/important/cookies", label: "Cookie Policy" },
-  ];
-
   const isActive = (path) => router.pathname === path;
 
   return (
@@ -31,6 +25,14 @@ export default function Navbar() {
           {/* Left: Brand */}
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2">
+              {/* ✅ Logo image */}
+              <Image
+                src="/logo.jpg" // ← Put your logo file in /public/logo.png
+                alt="Premier Paddock Racing logo"
+                width={40}
+                height={40}
+                className="rounded-md object-contain"
+              />
               <span className="text-xl font-extrabold text-green-900 tracking-tight">
                 Premier Paddock Racing
               </span>
@@ -52,37 +54,6 @@ export default function Navbar() {
                 {l.label}
               </Link>
             ))}
-
-            {/* Dropdown: Important Stuff */}
-            <div className="relative">
-              <button
-                onClick={() => setImportantOpen((v) => !v)}
-                className="text-sm text-gray-700 hover:text-green-900 font-medium flex items-center gap-1"
-              >
-                The Important Stuff
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {importantOpen && (
-                <div className="absolute mt-2 w-48 bg-white shadow rounded border">
-                  {importantLinks.map((il) => (
-                    <Link
-                      key={il.href}
-                      href={il.href}
-                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                    >
-                      {il.label}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {/* Boxed My Paddock (top-right) */}
             <Link
@@ -106,9 +77,19 @@ export default function Navbar() {
               stroke="currentColor"
             >
               {open ? (
-                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               ) : (
-                <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                <path
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
               )}
             </svg>
           </button>
@@ -132,23 +113,6 @@ export default function Navbar() {
                   {l.label}
                 </Link>
               ))}
-
-              {/* Mobile: Important Stuff submenu */}
-              <div className="mt-2">
-                <span className="px-3 py-2 font-medium text-gray-700">The Important Stuff</span>
-                <div className="ml-4 flex flex-col">
-                  {importantLinks.map((il) => (
-                    <Link
-                      key={il.href}
-                      href={il.href}
-                      className="px-3 py-1 text-sm text-gray-600 hover:text-green-900"
-                      onClick={() => setOpen(false)}
-                    >
-                      {il.label}
-                    </Link>
-                  ))}
-                </div>
-              </div>
 
               {/* Boxed My Paddock (mobile) */}
               <Link

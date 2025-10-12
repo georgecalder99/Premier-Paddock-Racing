@@ -3,17 +3,22 @@ import { NextResponse } from 'next/server';
 
 const BASIC_USER = process.env.BASIC_AUTH_USER || '';
 const BASIC_PASS = process.env.BASIC_AUTH_PASS || '';
-const ENABLED = (process.env.ENABLE_BASIC_AUTH || process.env.NEXT_PUBLIC_ENABLE_BASIC_AUTH) === '1';
+const ENABLED =
+  (process.env.ENABLE_BASIC_AUTH || process.env.NEXT_PUBLIC_ENABLE_BASIC_AUTH) === '1';
 
-// Protect everything except Next internals and static assets
+// Run on ALL routes; we'll skip assets inside the function
 export const config = {
-  matcher: [
-    // match all paths except _next, static files, and favicons, etc.
-    '/((?!_next/|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|css|js|map|txt|xml)).*)',
-  ],
+  matcher: '/:path*',
 };
 
 export default function middleware(req) {
+  const { pathname } = req.nextUrl;
+
+  // ✅ Let Next internals and ANYTHING with a dot (.) go straight through
+  if (pathname.startsWith('/_next') || pathname.includes('.')) {
+    return NextResponse.next();
+  }
+
   if (!ENABLED || !BASIC_USER || !BASIC_PASS) {
     return NextResponse.next();
   }
@@ -32,9 +37,7 @@ export default function middleware(req) {
     if (user === BASIC_USER && pass === BASIC_PASS) {
       return NextResponse.next();
     }
-  } catch (e) {
-    // fall through to 401
-  }
+  } catch {}
 
   return new Response('Unauthorized', {
     status: 401,
