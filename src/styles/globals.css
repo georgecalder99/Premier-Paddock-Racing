@@ -1,50 +1,46 @@
-/* src/styles/globals.css */
+@import "tailwindcss";
 
-/* Tailwind v3 directives */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
 
-/* Keep it simple: no @apply with variants to avoid CI quirks */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
 
-/* System dark: tell UA to style form controls correctly */
 @media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+
+/* --- Minimal system dark mode polish (no JS, no component edits) --- */
+@media (prefers-color-scheme: dark) {
+  /* Tell browsers we support dark UI */
   html { color-scheme: dark; }
-}
 
-/* Basic page colors (components already have their own classes) */
-html, body {
-  background-color: #ffffff;
-  color: #111827; /* gray-900 */
-}
-
-/* Dark-mode readable inputs without @apply */
-@media (prefers-color-scheme: dark) {
-  html, body {
-    background-color: #0a0a0a;
-    color: #e5e7eb; /* slate-200 */
+  /* Page background & default text */
+  body {
+    background: #0b1220;   /* deep slate */
+    color: #e5e7eb;        /* slate-200 */
   }
 
-  input, select, textarea {
-    background-color: #0f172a;   /* slate-900 */
-    color: #e5e7eb;              /* slate-200 */
-    border: 1px solid #334155;   /* slate-700 */
-  }
-  input::placeholder,
-  textarea::placeholder {
-    color: #9ca3af; /* gray-400 */
-  }
-
-  /* gentle hovers for things using hover:bg-gray-50/100 */
-  .hover\:bg-gray-50:hover,
-  .hover\:bg-gray-100:hover {
-    background-color: rgba(255,255,255,0.05) !important;
-  }
-
-  /* “white cards” look sensible in dark */
+  /* Your common shells (cards/panels use bg-white + border) */
   .bg-white,
-  .bg-white\/90 {
-    background-color: #0f172a !important; /* slate-900 */
+  .bg-white\/90 { /* matches "bg-white/90" too */
+    background-color: #0f172a !important; /* slate-900-ish */
   }
   .border,
   .border-b,
@@ -53,6 +49,20 @@ html, body {
   .border-r {
     border-color: #334155 !important; /* slate-700 */
   }
+
+  /* Typical text colors you use */
   .text-gray-700 { color: #e2e8f0 !important; } /* slate-200 */
   .text-gray-600 { color: #cbd5e1 !important; } /* slate-300 */
+
+  /* Gentle hover backgrounds so items still feel interactive */
+  .hover\:bg-gray-50:hover,
+  .hover\:bg-gray-100:hover {
+    background-color: rgba(255,255,255,0.05) !important;
+  }
+
+  /* Light green backgrounds look harsh on dark — soften them */
+  .bg-green-50 { background-color: rgba(16,185,129,0.12) !important; }
+
+  /* Optional: thin divider color */
+  .border-b { border-bottom-color: #334155 !important; }
 }

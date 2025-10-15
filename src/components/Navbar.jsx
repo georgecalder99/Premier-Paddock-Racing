@@ -27,12 +27,13 @@ export default function Navbar() {
             <Link href="/" className="flex items-center gap-2">
               {/* ✅ Logo image */}
               <Image
-                src="/logo.jpg" // ← Put your logo file in /public/logo.png
-                alt="Premier Paddock Racing logo"
-                width={40}
-                height={40}
-                className="rounded-md object-contain"
-              />
+  src="/logo.jpg"
+  alt="Premier Paddock Racing logo"
+  width={160}          // a bit bigger so it’s obvious
+  height={40}
+  priority
+  className="block h-10 w-auto object-contain"  // enforce visible size
+/>
               <span className="text-xl font-extrabold text-green-900 tracking-tight">
                 Premier Paddock Racing
               </span>
