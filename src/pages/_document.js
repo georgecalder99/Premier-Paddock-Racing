@@ -1,13 +1,10 @@
-// src/pages/_document.js
+/* eslint-disable @next/next/no-sync-scripts */
 import { Html, Head, Main, NextScript } from "next/document";
 
 export default function Document() {
   return (
     <Html lang="en">
-      <Head>
-        {/* Tailwind CDN — no build step or config needed */}
-        <script src="https://cdn.tailwindcss.com"></script>
-      </Head>
+      <Head>{/* no custom <script> tags here */}</Head>
       <body className="antialiased">
         <Main />
         <NextScript />

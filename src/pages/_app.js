@@ -1,36 +1,34 @@
 // src/pages/_app.js
-
 import '../styles/globals.css';
 import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import { supabase } from '../lib/supabaseClient';
+import Script from 'next/script'; // ← ADD
 
 export default function App({ Component, pageProps }) {
   const [session, setSession] = useState(null);
 
   useEffect(() => {
-    // 1) Get current session on load
+    let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data?.session ?? null);
+      if (mounted) setSession(data.session ?? null);
     });
-
-    // 2) Subscribe to auth changes (login/logout)
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
     });
-
-    // 3) Cleanup subscription on unmount
     return () => {
-      try {
-        sub?.subscription?.unsubscribe?.();
-      } catch {}
+      mounted = false;
+      sub?.subscription?.unsubscribe?.();
     };
   }, []);
 
   return (
     <>
-      <Navbar />
+      {/* Bring back Tailwind (CDN) without the _document sync-script lint error */}
+      <Script src="https://cdn.tailwindcss.com" strategy="beforeInteractive" />
+
+      <Navbar session={session} />
       <Component {...pageProps} session={session} />
       <Footer />
     </>
