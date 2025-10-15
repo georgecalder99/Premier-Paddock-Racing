@@ -102,26 +102,27 @@ function Hero({ isAdmin, loggedIn }) {
           aria-hidden="true"
           className="h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-green-900/60" />
-        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent" />
+        {/* dark-only tweaks to overlay intensity */}
+        <div className="absolute inset-0 bg-green-900/60 dark:bg-green-900/70" />
+        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent dark:from-green-900/60" />
       </div>
 
       {/* Admin button */}
-     {isAdmin && (
-  <div className="absolute right-6 top-6 z-10">
-    <Link
-      href="/admin/ballots"
-      className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10"
-    >
-      Admin
-    </Link>
-  </div>
-)}
+      {isAdmin && (
+        <div className="absolute right-6 top-6 z-10">
+          <Link
+            href="/admin/ballots"
+            className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10 dark:border-white/60 dark:hover:bg-white/15"
+          >
+            Admin
+          </Link>
+        </div>
+      )}
 
       {/* Foreground */}
       <div className="relative mx-auto max-w-7xl px-6 py-24 text-center text-white md:py-32">
         <div className="mx-auto max-w-3xl">
-          <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm">
+          <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm dark:border-white/20 dark:bg-white/5">
             Your horse, your say
           </span>
 
@@ -135,31 +136,34 @@ function Hero({ isAdmin, loggedIn }) {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            {/* Primary CTA — only change in dark */}
             <Link
               href="/horses"
-              className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100"
+              className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100 dark:bg-green-700 dark:text-white dark:hover:bg-green-600"
             >
               View Horses
             </Link>
+
+            {/* Secondary outline — only change in dark */}
             <Link
               href="/how-it-works"
-              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20"
+              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
             >
               How it works
             </Link>
 
-            {/* Sign up / My Paddock */}
+            {/* Sign up / My Paddock — only change in dark */}
             {!loggedIn ? (
               <Link
                 href="/my-paddock"
-                className="rounded-lg border border-white/70 bg-amber-500/90 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-amber-500"
+                className="rounded-lg border border-white/70 bg-amber-500/90 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-amber-500 dark:border-transparent dark:bg-amber-400/90 dark:text-black dark:hover:bg-amber-400"
               >
                 Sign up
               </Link>
             ) : (
               <Link
                 href="/my-paddock"
-                className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20"
+                className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
               >
                 My Paddock
               </Link>
@@ -177,55 +181,61 @@ function Hero({ isAdmin, loggedIn }) {
     </section>
   );
 }
-
 /* ===========================
    WELCOME TO THE CLUB
 =========================== */
 function WelcomeToTheClub() {
   return (
-    <section className="bg-gray-50">
+    <section className="bg-gray-50 dark:bg-neutral-900">
       <div className="max-w-7xl mx-auto px-6 py-16 grid md:grid-cols-2 gap-8 items-center">
         <div>
-          <h2 className="text-2xl md:text-3xl font-bold text-green-900">
+          <h2 className="text-2xl md:text-3xl font-bold text-green-900 dark:text-green-400">
             Welcome to the Club
           </h2>
-          <p className="mt-3 text-gray-700">
+          <p className="mt-3 text-gray-700 dark:text-gray-300">
             Premier Paddock Racing makes racehorse ownership sociable,
             accessible and transparent. Join a community of owners who enjoy the
             journey as much as the result—trainer updates, race-day badge
             ballots, and behind-the-scenes stable visits.
           </p>
-          <ul className="mt-5 space-y-2 text-gray-700">
+
+          <ul className="mt-5 space-y-2 text-gray-700 dark:text-gray-300">
             <li>• You can vote on key decisions for your horse</li>
             <li>• Clear pricing and share structure</li>
             <li>• Regular media updates from the yard</li>
             <li>• Fair ballots for badges and visits</li>
             <li>• A modern owner portal: My Paddock</li>
           </ul>
+
           <div className="mt-6 flex gap-3">
             <Link
               href="/horses"
-              className="px-5 py-3 bg-green-900 text-white rounded-lg"
+              className="px-5 py-3 bg-green-900 text-white rounded-lg
+                         hover:bg-green-800 dark:bg-green-700 dark:hover:bg-green-600"
             >
               Browse Horses
             </Link>
             <Link
               href="/about-us"
-              className="px-5 py-3 border rounded-lg text-green-900 hover:bg-white"
+              className="px-5 py-3 border rounded-lg text-green-900 hover:bg-white
+                         dark:border-green-400 dark:text-green-300 dark:hover:bg-green-900/20"
             >
               About Us
             </Link>
           </div>
         </div>
-        <div className="overflow-hidden rounded-xl shadow bg-white">
-     
 
-<Image
-  src="/homepage-1.jpg"
-  width={1600}
-  height={600}
-  className="w-full h-80 object-cover"
-/>
+        <div
+          className="overflow-hidden rounded-xl shadow bg-white dark:bg-neutral-800
+                     ring-1 ring-black/5 dark:ring-white/10"
+        >
+          <Image
+            src="/homepage-1.jpg"
+            width={1600}
+            height={600}
+            className="w-full h-80 object-cover"
+            alt="Premier Paddock welcome"
+          />
         </div>
       </div>
     </section>
