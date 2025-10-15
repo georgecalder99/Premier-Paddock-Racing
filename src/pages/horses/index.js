@@ -204,6 +204,41 @@ export default function HorsesPage() {
 
     // NOTE: removed syncSubscriberToUserSafe(); not needed with DB-side view
 
+
+    // --- send confirmation email (non-blocking) ---
+try {
+  const to = session.user?.email || "";
+  if (to) {
+    const pricePerShare = Number(horse.share_price ?? 0);
+    const total = pricePerShare * n;
+
+    // fire-and-forget, but await once to surface errors in console
+    const resp = await fetch("/api/send-purchase-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to,
+        horseName: horse.name || "Horse",
+        qty: n,
+        pricePerShare,
+        total,
+      }),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error("[purchase email] API error:", resp.status, txt);
+    } else {
+      const j = await resp.json().catch(() => ({}));
+      console.log("[purchase email] sent:", j);
+    }
+  } else {
+    console.warn("[purchase email] No user email on session, skipping.");
+  }
+} catch (e) {
+  console.error("[purchase email] fetch failed:", e);
+}
+
     // ✅ Redirect to confirmation
     window.location.href = `/purchase/success?horse=${encodeURIComponent(horse.id)}&qty=${encodeURIComponent(n)}`;
   }

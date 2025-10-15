@@ -20,6 +20,82 @@ export default function HorseDetailPage() {
   const [soldTotal, setSoldTotal] = useState(0);
   const [qty, setQty] = useState(1);
 
+  // --- About blocks renderer helpers ---
+function toEmbedUrl(url = "") {
+  // YouTube
+  const yt1 = url.match(/youtube\.com\/watch\?v=([A-Za-z0-9_-]+)/i);
+  const yt2 = url.match(/youtu\.be\/([A-Za-z0-9_-]+)/i);
+  if (yt1 || yt2) {
+    const id = (yt1?.[1] || yt2?.[1]) ?? "";
+    return `https://www.youtube.com/embed/${id}`;
+  }
+  // Vimeo
+  const vimeo = url.match(/vimeo\.com\/(\d+)/i);
+  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
+  // Otherwise return original (mp4/webm/etc.)
+  return url;
+}
+
+function AboutBlocks({ blocks = [], horseName = "" }) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return null;
+
+  return (
+    <section className="bg-white rounded-xl border p-6 shadow-sm">
+      <h2 className="text-2xl font-bold text-green-900">About {horseName}</h2>
+      <div className="mt-4 space-y-6">
+        {blocks.map((b, i) => {
+          if (b.type === "text") {
+            return (
+              <p key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+                {b.body || ""}
+              </p>
+            );
+          }
+          if (b.type === "image") {
+            return (
+              <figure key={i}>
+                <img
+                  src={b.url || ""}
+                  alt={b.caption || horseName || "Horse image"}
+                  className="w-full rounded-xl border object-cover"
+                />
+                {b.caption ? (
+                  <figcaption className="text-sm text-gray-600 mt-2">{b.caption}</figcaption>
+                ) : null}
+              </figure>
+            );
+          }
+          if (b.type === "video") {
+            const embed = toEmbedUrl(b.url || "");
+            const isDirectFile = /\.(mp4|webm|ogg)(\?|#|$)/i.test(embed);
+            return (
+              <figure key={i}>
+                {isDirectFile ? (
+                  <video className="w-full rounded-xl border" controls playsInline src={embed} />
+                ) : (
+                  <div className="aspect-video">
+                    <iframe
+                      className="w-full h-full rounded-xl border"
+                      src={embed}
+                      title={b.caption || `Video ${i + 1}`}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                )}
+                {b.caption ? (
+                  <figcaption className="text-sm text-gray-600 mt-2">{b.caption}</figcaption>
+                ) : null}
+              </figure>
+            );
+          }
+          return null;
+        })}
+      </div>
+    </section>
+  );
+}
+
   // auth
   useEffect(() => {
     let sub;
@@ -37,13 +113,13 @@ export default function HorseDetailPage() {
     if (!horseId) return;
     (async () => {
       setLoading(true);
-const { data: h, error: hErr } = await supabase
-  .from("horses")
-  .select("*")
-  .eq("id", horseId)
-  .maybeSingle();
+      const { data: h, error: hErr } = await supabase
+        .from("horses")
+        .select("*")
+        .eq("id", horseId)
+        .maybeSingle();
 
-if (hErr) console.error("[HorseDetail] horse load error:", hErr);
+      if (hErr) console.error("[HorseDetail] horse load error:", hErr);
 
       if (hErr || !h) {
         console.error("[HorseDetail] horse load error:", hErr);
@@ -110,17 +186,19 @@ if (hErr) console.error("[HorseDetail] horse load error:", hErr);
 
     const { data: liveHorse, error: liveErr } = await supabase
       .from("horses")
-      .select("id,total_shares")
+      .select("id,total_shares, name, share_price")
       .eq("id", horseId)
       .single();
     if (liveErr || !liveHorse) {
       alert("Could not verify availability. Try again.");
       return;
     }
+
     const { data: ownsOne } = await supabase
       .from("ownerships")
       .select("horse_id, shares")
       .eq("horse_id", horseId);
+
     const soldLive = (ownsOne || []).reduce((s, o) => s + (o.shares || 0), 0);
     const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
 
@@ -129,7 +207,7 @@ if (hErr) console.error("[HorseDetail] horse load error:", hErr);
       return;
     }
     if (n > remainingLive) {
-      alert(`Only ${remainingLive} share(s) remaining for ${horse?.name || "this horse"}.`);
+      alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`);
       return;
     }
 
@@ -168,6 +246,46 @@ if (hErr) console.error("[HorseDetail] horse load error:", hErr);
       }
     }
 
+    // --- send purchase confirmation email (non-blocking) ---
+    try {
+      const to = session.user?.email || "";
+      if (to) {
+        const pricePerShare = Number(liveHorse?.share_price ?? 0);
+        const total = pricePerShare * n;
+
+     const buyerName =
+  session.user?.user_metadata?.full_name ||
+  session.user?.user_metadata?.name ||
+  (to.includes("@") ? to.split("@")[0] : "Owner");
+
+const resp = await fetch("/api/send-purchase-email", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    to,
+    buyerName,
+    horseName: liveHorse?.name || "Horse",
+    qty: n,
+    pricePerShare,
+    total,
+  }),
+});
+
+
+        const txt = await resp.text();
+        try {
+          console.log("[purchase email] status", resp.status, JSON.parse(txt));
+        } catch {
+          console.log("[purchase email] status", resp.status, txt);
+        }
+      } else {
+        console.warn("[purchase email] No user email on session; skipping.");
+      }
+    } catch (e) {
+      console.error("[purchase email] fetch failed:", e);
+    }
+
+    // redirect to confirmation
     window.location.href = `/purchase/success?horse=${encodeURIComponent(
       horseId
     )}&qty=${encodeURIComponent(n)}`;
@@ -235,34 +353,40 @@ if (hErr) console.error("[HorseDetail] horse load error:", hErr);
           {/* LEFT: content */}
           <div className="lg:col-span-2 space-y-10">
             {/* Gallery */}
-            <section>
-              {photos.length > 0 ? (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {photos.map((src, i) => (
-                    <img
-                      key={i}
-                      src={src}
-                      alt={`${horse.name} photo ${i + 1}`}
-                      className="w-full aspect-[4/3] object-cover rounded-xl border"
-                    />
-                  ))}
-                </div>
-              ) : (
-                <img
-                  src={horse.photo_url || "https://placehold.co/1200x800?text=Horse"}
-                  alt={horse.name}
-                  className="w-full aspect-[4/3] object-cover rounded-xl border"
-                />
-              )}
-            </section>
+           <section>
+  {photos.length > 0 ? (
+    <div className="grid sm:grid-cols-2 gap-3">
+      {photos.map((src, i) => (
+        <img
+          key={i}
+          src={src}
+          alt={`${horse.name} photo ${i + 1}`}
+          className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border"
+          onError={(e) => { e.currentTarget.src = "https://placehold.co/1200x800?text=Horse"; }}
+        />
+      ))}
+    </div>
+  ) : (
+    <img
+      src={horse.photo_url || "https://placehold.co/1200x800?text=Horse"}
+      alt={horse.name}
+      className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border"
+      onError={(e) => { e.currentTarget.src = "https://placehold.co/1200x800?text=Horse"; }}
+    />
+  )}
+</section>
 
-            {/* Description */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">About {horse.name}</h2>
-              <p className="text-gray-800 leading-relaxed mt-3 whitespace-pre-wrap">
-                {horse.description || "No description yet."}
-              </p>
-            </section>
+         {/* About: show custom blocks if present, otherwise fallback to simple description */}
+{Array.isArray(horse.about_blocks) && horse.about_blocks.length > 0 ? (
+  <AboutBlocks blocks={horse.about_blocks} horseName={horse.name} />
+) : (
+  <section className="bg-white rounded-xl border p-6 shadow-sm">
+    <h2 className="text-2xl font-bold text-green-900">About {horse.name}</h2>
+    <p className="text-gray-800 leading-relaxed mt-3 whitespace-pre-wrap">
+      {horse.description || "No description yet."}
+    </p>
+  </section>
+)}
 
             {/* Trainer (no 'stayer' word) */}
             <section className="bg-white rounded-xl border p-6 shadow-sm">

@@ -1,9 +1,10 @@
 // src/pages/_app.js
-import '@/styles/globals.css';
+
+import '../styles/globals.css';
 import { useEffect, useState } from 'react';
-import Navbar from '@/components/Navbar';
-import Footer from '@/components/Footer';
-import { supabase } from '@/lib/supabaseClient';
+import Navbar from '../components/Navbar';
+import Footer from '../components/Footer';
+import { supabase } from '../lib/supabaseClient';
 
 export default function App({ Component, pageProps }) {
   const [session, setSession] = useState(null);
@@ -19,9 +20,11 @@ export default function App({ Component, pageProps }) {
       setSession(newSession ?? null);
     });
 
-    // 3) Cleanup
+    // 3) Cleanup subscription on unmount
     return () => {
-      try { sub?.subscription?.unsubscribe?.(); } catch {}
+      try {
+        sub?.subscription?.unsubscribe?.();
+      } catch {}
     };
   }, []);
 

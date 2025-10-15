@@ -1312,6 +1312,9 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
   const [msg, setMsg] = useState("");
   const [loadingExisting, setLoadingExisting] = useState(false);
 
+  // NEW: rich blocks state
+  const [aboutBlocks, setAboutBlocks] = useState([]);
+
   const [form, setForm] = useState({
     // basics
     name: "",
@@ -1349,7 +1352,35 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
   useEffect(() => {
     async function loadExisting() {
       if (!horseId) {
-        setForm((f) => ({ ...f, name: "", trainer: "", specialty: "", share_price: 60, total_shares: 3200, photo_url: "", photos_csv: "", description: "", trainer_bio: "", trainer_photo_url: "", horse_value: "", training_vet: "", insurance_race: "", management_fee: "", contingency: "", breakdown_total: "", sire: "", dam: "", damsire: "", foaled: "", sex: "", color: "", breeder: "", form_text: "", featured_position: "" }));
+        setForm((f) => ({
+          ...f,
+          name: "",
+          trainer: "",
+          specialty: "",
+          share_price: 60,
+          total_shares: 3200,
+          photo_url: "",
+          photos_csv: "",
+          description: "",
+          trainer_bio: "",
+          trainer_photo_url: "",
+          horse_value: "",
+          training_vet: "",
+          insurance_race: "",
+          management_fee: "",
+          contingency: "",
+          breakdown_total: "",
+          sire: "",
+          dam: "",
+          damsire: "",
+          foaled: "",
+          sex: "",
+          color: "",
+          breeder: "",
+          form_text: "",
+          featured_position: ""
+        }));
+        setAboutBlocks([]); // NEW: clear blocks when starting a new horse
         setMsg("");
         setLoadingExisting(false);
         return;
@@ -1357,14 +1388,16 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
       setLoadingExisting(true);
       const { data: h, error } = await supabase
         .from("horses")
-        .select("*, featured_position")
+        .select("*, featured_position, about_blocks")
         .eq("id", horseId)
         .maybeSingle();
+
       if (error || !h) {
         setMsg("Could not load horse.");
         setLoadingExisting(false);
         return;
       }
+
       setForm({
         name: h.name || "",
         trainer: h.trainer || "",
@@ -1392,6 +1425,10 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
         form_text: h.form_text || "",
         featured_position: h.featured_position ? String(h.featured_position) : "",
       });
+
+      // NEW: load existing blocks
+      setAboutBlocks(Array.isArray(h.about_blocks) ? h.about_blocks : []);
+
       setLoadingExisting(false);
       setMsg("");
     }
@@ -1441,12 +1478,14 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
         breeder: form.breeder?.trim() || null,
         form_text: form.form_text?.trim() || null,
         featured_position: form.featured_position ? Number(form.featured_position) : null,
+
+        // NEW: save blocks
+        about_blocks: Array.isArray(aboutBlocks) ? aboutBlocks : [],
       };
 
       // ensure featured slot uniqueness (clear previous holder)
       if (payload.featured_position === 1 || payload.featured_position === 2 || payload.featured_position === 3) {
         const slot = payload.featured_position;
-        // Clear any other horse in this slot
         const q = supabase.from("horses").update({ featured_position: null }).eq("featured_position", slot);
         if (horseId) q.neq("id", horseId);
         await q;
@@ -1534,7 +1573,7 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
           {/* Content */}
           <div className="grid md:grid-cols-2 gap-4">
             <label className="block text-sm">
-              About the horse
+              About the horse (legacy fallback)
               <textarea name="description" value={form.description} onChange={onChange} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Big description…" />
             </label>
             <label className="block text-sm">
@@ -1542,6 +1581,9 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
               <textarea name="trainer_bio" value={form.trainer_bio} onChange={onChange} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Trainer background…" />
             </label>
           </div>
+
+          {/* NEW: Rich About blocks editor */}
+          <AboutBlocksEditor value={aboutBlocks} onChange={setAboutBlocks} />
 
           {/* Costs */}
           <div className="bg-gray-50 rounded-lg border p-4">
@@ -1602,6 +1644,314 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
         </form>
       )}
     </section>
+  );
+}
+
+function AboutBlocksEditor({ value = [], onChange }) {
+  const blocks = Array.isArray(value) ? value : [];
+
+  function add(type) {
+    const blank =
+      type === "text"
+        ? { type: "text", body: "" }
+        : type === "image"
+        ? { type: "image", url: "", caption: "" }
+        : { type: "video", url: "", caption: "" };
+    onChange([...blocks, blank]);
+  }
+
+  function AboutBlocksEditor({ value = [], onChange }) {
+  const blocks = Array.isArray(value) ? value : [];
+
+  function add(type) {
+    const blank =
+      type === "text"
+        ? { type: "text", body: "" }
+        : type === "image"
+        ? { type: "image", url: "", caption: "" }
+        : { type: "video", url: "", caption: "" };
+    onChange([...blocks, blank]);
+  }
+
+  function update(i, patch) {
+    onChange(blocks.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  }
+
+  function move(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= blocks.length) return;
+    const copy = blocks.slice();
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    onChange(copy);
+  }
+
+  function remove(i) {
+    onChange(blocks.filter((_, idx) => idx !== i));
+  }
+
+  const isVideoFile = (u = "") => /\.(mp4|webm|ogg)(\?|#|$)/i.test(u);
+
+  return (
+    <div className="bg-gray-50 rounded-lg border p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-green-900">About — content blocks</h3>
+        <div className="flex gap-2">
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("text")}>+ Text</button>
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("image")}>+ Image</button>
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("video")}>+ Video</button>
+        </div>
+      </div>
+
+      {blocks.length === 0 ? (
+        <p className="text-sm text-gray-600 mt-2">No blocks yet. Add text, image or video in any order.</p>
+      ) : (
+        <ul className="mt-3 space-y-3">
+          {blocks.map((blk, i) => (
+            <li key={i} className="rounded border bg-white p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wide text-gray-500">
+                  Block #{i + 1} — {blk.type}
+                </span>
+                <div className="flex gap-2">
+                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, -1)}>↑</button>
+                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, +1)}>↓</button>
+                  <button type="button" className="px-2 py-1 border rounded text-xs text-red-700" onClick={() => remove(i)}>Delete</button>
+                </div>
+              </div>
+
+              {blk.type === "text" && (
+                <label className="block text-sm mt-2">
+                  Body
+                  <textarea
+                    value={blk.body || ""}
+                    onChange={(e) => update(i, { body: e.target.value })}
+                    rows={5}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                    placeholder="Write the paragraph…"
+                  />
+                </label>
+              )}
+
+              {blk.type === "image" && (
+                <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                  <label className="block text-sm">
+                    Image URL
+                    <input
+                      value={blk.url || ""}
+                      onChange={(e) => update(i, { url: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="https://…"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Caption (optional)
+                    <input
+                      value={blk.caption || ""}
+                      onChange={(e) => update(i, { caption: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="e.g. First canter"
+                    />
+                  </label>
+                  {blk.url ? (
+                    <div className="sm:col-span-2">
+                      <img
+                        src={blk.url}
+                        alt={blk.caption || ""}
+                        className="mt-2 max-h-48 rounded border object-contain"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {blk.type === "video" && (
+                <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                  <label className="block text-sm sm:col-span-2">
+                    Video URL (YouTube/Vimeo/MP4)
+                    <input
+                      value={blk.url || ""}
+                      onChange={(e) => update(i, { url: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="https://youtube.com/watch?v=…  or  https://files/clip.mp4"
+                    />
+                  </label>
+                  <label className="block text-sm sm:col-span-2">
+                    Caption (optional)
+                    <input
+                      value={blk.caption || ""}
+                      onChange={(e) => update(i, { caption: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                    />
+                  </label>
+                  {blk.url ? (
+                    <div className="sm:col-span-2">
+                      {isVideoFile(blk.url) ? (
+                        <video className="w-full rounded border" src={blk.url} controls playsInline />
+                      ) : (
+                        <div className="aspect-video">
+                          <iframe
+                            className="w-full h-full rounded border"
+                            src={blk.url}
+                            title="Video preview"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+  function update(i, patch) {
+    onChange(blocks.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  }
+
+  function move(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= blocks.length) return;
+    const copy = blocks.slice();
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    onChange(copy);
+  }
+
+  function remove(i) {
+    onChange(blocks.filter((_, idx) => idx !== i));
+  }
+
+  // simple inline previews for image & video
+  function isVideoFile(u = "") {
+    return /\.(mp4|webm|ogg)(\?|#|$)/i.test(u);
+  }
+
+  return (
+    <div className="bg-gray-50 rounded-lg border p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-green-900">About — content blocks</h3>
+        <div className="flex gap-2">
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("text")}>+ Text</button>
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("image")}>+ Image</button>
+          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("video")}>+ Video</button>
+        </div>
+      </div>
+
+      {blocks.length === 0 ? (
+        <p className="text-sm text-gray-600 mt-2">No blocks yet. Add text, image or video in any order.</p>
+      ) : (
+        <ul className="mt-3 space-y-3">
+          {blocks.map((blk, i) => (
+            <li key={i} className="rounded border bg-white p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wide text-gray-500">
+                  Block #{i + 1} — {blk.type}
+                </span>
+                <div className="flex gap-2">
+                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, -1)}>↑</button>
+                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, +1)}>↓</button>
+                  <button type="button" className="px-2 py-1 border rounded text-xs text-red-700" onClick={() => remove(i)}>Delete</button>
+                </div>
+              </div>
+
+              {/* TEXT */}
+              {blk.type === "text" && (
+                <label className="block text-sm mt-2">
+                  Body
+                  <textarea
+                    value={blk.body || ""}
+                    onChange={(e) => update(i, { body: e.target.value })}
+                    rows={5}
+                    className="mt-1 w-full border rounded px-3 py-2"
+                    placeholder="Write the paragraph…"
+                  />
+                </label>
+              )}
+
+              {/* IMAGE */}
+              {blk.type === "image" && (
+                <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                  <label className="block text-sm">
+                    Image URL
+                    <input
+                      value={blk.url || ""}
+                      onChange={(e) => update(i, { url: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="https://…"
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Caption (optional)
+                    <input
+                      value={blk.caption || ""}
+                      onChange={(e) => update(i, { caption: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="e.g. First canter"
+                    />
+                  </label>
+                  {blk.url ? (
+                    <div className="sm:col-span-2">
+                      <img
+                        src={blk.url}
+                        alt={blk.caption || ""}
+                        className="mt-2 max-h-48 rounded border object-contain"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {/* VIDEO */}
+              {blk.type === "video" && (
+                <div className="grid sm:grid-cols-2 gap-3 mt-2">
+                  <label className="block text-sm sm:col-span-2">
+                    Video URL (YouTube/Vimeo/MP4)
+                    <input
+                      value={blk.url || ""}
+                      onChange={(e) => update(i, { url: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                      placeholder="https://youtube.com/watch?v=…  or  https://files/clip.mp4"
+                    />
+                  </label>
+                  <label className="block text-sm sm:col-span-2">
+                    Caption (optional)
+                    <input
+                      value={blk.caption || ""}
+                      onChange={(e) => update(i, { caption: e.target.value })}
+                      className="mt-1 w-full border rounded px-3 py-2"
+                    />
+                  </label>
+
+                  {/* very light preview */}
+                  {blk.url ? (
+                    <div className="sm:col-span-2">
+                      {isVideoFile(blk.url) ? (
+                        <video className="w-full rounded border" src={blk.url} controls playsInline />
+                      ) : (
+                        <div className="aspect-video">
+                          <iframe
+                            className="w-full h-full rounded border"
+                            src={blk.url}
+                            title="Video preview"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -2096,8 +2446,9 @@ function ManageVotesCard() {
     </section>
   );
 }
+
 /* ===========================
-   RENEWALS (ADMIN) — horse name + shares count + edit/delete + process (persisted)
+   RENEWALS (ADMIN) — horse name + shares count + price per share + edit/delete + process (persisted)
 =========================== */
 function ManageRenewalsCard() {
   const [horses, setHorses] = useState([]);
@@ -2105,8 +2456,6 @@ function ManageRenewalsCard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-
-  // processing UI
   const [processingId, setProcessingId] = useState(null);
 
   // create form
@@ -2116,6 +2465,7 @@ function ManageRenewalsCard() {
     renew_start: "",
     renew_end: "",
     notes: "",
+    price_per_share: "", // persisted
   });
 
   // edit form
@@ -2127,14 +2477,34 @@ function ManageRenewalsCard() {
     renew_end: "",
     notes: "",
     status: "open",
+    price_per_share: "", // persisted
   });
+
+  // --- datetime helpers (local <-> ISO) ---
+  function toLocalInputValue(dateLike) {
+    if (!dateLike) return "";
+    const d = new Date(dateLike);
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function localInputToISO(localStr) {
+    if (!localStr) return null;
+    return new Date(localStr).toISOString();
+  }
+
+  // money helpers
+  const gbp = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
+  const fmtPrice = v => (v === null || v === undefined || v === "" ? "—" : gbp.format(Number(v)));
+  function parseMoney(v) {
+    if (v === "" || v === null || v === undefined) return null;
+    const normalized = String(v).replace(",", ".");
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
+  }
 
   useEffect(() => {
     (async () => {
-      const { data: hs } = await supabase
-        .from("horses")
-        .select("id,name")
-        .order("name");
+      const { data: hs } = await supabase.from("horses").select("id,name").order("name");
       setHorses(hs || []);
       await load();
     })();
@@ -2145,26 +2515,29 @@ function ManageRenewalsCard() {
     try {
       const { data, error } = await supabase
         .from("renew_cycles")
-        .select("id,horse_id,term_label,renew_start,renew_end,status,notes,created_at,processed_at")
+        .select(`
+          id,
+          horse_id,
+          term_label,
+          renew_start,
+          renew_end,
+          status,
+          notes,
+          processed_at,
+          price_per_share
+        `)
         .order("created_at", { ascending: false })
         .limit(50);
-
       if (error) throw error;
 
       const list = data || [];
-      if (list.length === 0) {
-        setRows([]);
-        return;
-      }
+      if (list.length === 0) { setRows([]); return; }
 
       // horse_id -> name
       const horseIds = Array.from(new Set(list.map(r => r.horse_id))).filter(Boolean);
       let horseMap = {};
       if (horseIds.length) {
-        const { data: hs } = await supabase
-          .from("horses")
-          .select("id,name")
-          .in("id", horseIds);
+        const { data: hs } = await supabase.from("horses").select("id,name").in("id", horseIds);
         horseMap = Object.fromEntries((hs || []).map(h => [h.id, h.name]));
       }
 
@@ -2177,7 +2550,6 @@ function ManageRenewalsCard() {
           .select("renew_cycle_id, shares")
           .in("renew_cycle_id", ids);
         if (rErr) throw rErr;
-
         sharesByCycle = (resp || []).reduce((acc, r) => {
           const n = Number(r.shares ?? 0);
           acc[r.renew_cycle_id] = (acc[r.renew_cycle_id] || 0) + n;
@@ -2185,13 +2557,11 @@ function ManageRenewalsCard() {
         }, {});
       }
 
-      setRows(
-        list.map(r => ({
-          ...r,
-          horse_name: horseMap[r.horse_id] || "(Unknown horse)",
-          renew_count: sharesByCycle[r.id] || 0, // total shares renewed
-        }))
-      );
+      setRows(list.map(r => ({
+        ...r,
+        horse_name: horseMap[r.horse_id] || "(Unknown horse)",
+        renew_count: sharesByCycle[r.id] || 0,
+      })));
     } catch (e) {
       console.error("[ManageRenewalsCard] load error:", e);
       setRows([]);
@@ -2212,19 +2582,29 @@ function ManageRenewalsCard() {
     try {
       if (!form.horse_id) throw new Error("Select a horse");
       if (!form.renew_start || !form.renew_end) throw new Error("Set start/end dates");
+
+      const startISO = localInputToISO(form.renew_start);
+      const endISO = localInputToISO(form.renew_end);
+      if (new Date(endISO) <= new Date(startISO)) throw new Error("End must be after start");
+
+      const price = parseMoney(form.price_per_share);
+      if (price === null || price < 0) throw new Error("Enter a valid price per share (≥ 0).");
+
       const payload = {
         horse_id: form.horse_id,
         term_label: form.term_label?.trim() || null,
-        renew_start: new Date(form.renew_start).toISOString(),
-        renew_end: new Date(form.renew_end).toISOString(),
+        renew_start: startISO,
+        renew_end: endISO,
         notes: form.notes?.trim() || null,
         status: "open",
+        price_per_share: price, // persist to SQL
       };
-      const { error } = await supabase.from("renew_cycles").insert(payload);
-      if (error) throw error;
+
+      const { error: createErr } = await supabase.from("renew_cycles").insert(payload);
+      if (createErr) throw createErr;
 
       setMsg("✅ Renewal window created & opened.");
-      setForm({ horse_id: "", term_label: "", renew_start: "", renew_end: "", notes: "" });
+      setForm({ horse_id: "", term_label: "", renew_start: "", renew_end: "", notes: "", price_per_share: "" });
       await load();
     } catch (e) {
       alert(e.message || "Failed to create renewal");
@@ -2238,10 +2618,11 @@ function ManageRenewalsCard() {
     setEditForm({
       horse_id: row.horse_id || "",
       term_label: row.term_label || "",
-      renew_start: row.renew_start ? new Date(row.renew_start).toISOString().slice(0, 16) : "",
-      renew_end: row.renew_end ? new Date(row.renew_end).toISOString().slice(0, 16) : "",
+      renew_start: toLocalInputValue(row.renew_start),
+      renew_end: toLocalInputValue(row.renew_end),
       notes: row.notes || "",
       status: row.status || "open",
+      price_per_share: row.price_per_share ?? "",
     });
   }
 
@@ -2249,16 +2630,27 @@ function ManageRenewalsCard() {
     try {
       if (!editForm.horse_id) throw new Error("Select a horse");
       if (!editForm.renew_start || !editForm.renew_end) throw new Error("Set start/end dates");
+
+      const startISO = localInputToISO(editForm.renew_start);
+      const endISO = localInputToISO(editForm.renew_end);
+      if (new Date(endISO) <= new Date(startISO)) throw new Error("End must be after start");
+
+      const price = parseMoney(editForm.price_per_share);
+      if (price === null || price < 0) throw new Error("Enter a valid price per share (≥ 0).");
+
       const payload = {
         horse_id: editForm.horse_id,
         term_label: editForm.term_label?.trim() || null,
-        renew_start: new Date(editForm.renew_start).toISOString(),
-        renew_end: new Date(editForm.renew_end).toISOString(),
+        renew_start: startISO,
+        renew_end: endISO,
         notes: editForm.notes?.trim() || null,
         status: editForm.status,
+        price_per_share: price, // persist to SQL
       };
-      const { error } = await supabase.from("renew_cycles").update(payload).eq("id", id);
-      if (error) throw error;
+
+      const { error: updateErr } = await supabase.from("renew_cycles").update(payload).eq("id", id);
+      if (updateErr) throw updateErr;
+
       setEditingId(null);
       await load();
     } catch (e) {
@@ -2282,39 +2674,25 @@ function ManageRenewalsCard() {
 
   // Apply renew decisions to ownerships (RPC), then persist processed_at so it sticks after reload
   async function processCycle(id) {
-    // Already processed? (DB-backed)
     const row = rows.find(r => r.id === id);
     if (row?.processed_at) return;
-
-    if (
-      !confirm(
-        "This will update ownerships for this renewal window:\n" +
-        "• Set each owner’s shares to the renewed amount\n" +
-        "• Delete owners who didn’t renew\n\nProceed?"
-      )
-    ) return;
+    if (!confirm("This will update ownerships for this renewal window:\n• Set each owner’s shares to the renewed amount\n• Delete owners who didn’t renew\n\nProceed?")) return;
 
     setProcessingId(id);
     try {
-      // 1) Run your SQL function that adjusts ownerships
       const { data, error } = await supabase.rpc("process_renew_cycle", { p_cycle_id: id });
       if (error) throw error;
 
-      // 2) Mark as processed in DB so UI persists after refresh
       const { error: markErr } = await supabase
         .from("renew_cycles")
-        .update({
-          processed_at: new Date().toISOString(),
-          // processed_by: (await supabase.auth.getUser())?.data?.user?.id || null, // if you added processed_by
-        })
+        .update({ processed_at: new Date().toISOString() })
         .eq("id", id);
       if (markErr) throw markErr;
 
-      // 3) Show summary
       const summary = (data || []).map(r => `${r.action}: ${r.affected}`).join("\n");
       alert(`✅ Processing complete.\n\n${summary}`);
 
-      await load(); // will now show the button as "Processed" (disabled)
+      await load();
     } catch (e) {
       alert(e.message || "Failed to process renewals.");
     } finally {
@@ -2342,7 +2720,9 @@ function ManageRenewalsCard() {
               required
             >
               <option value="">— Select horse —</option>
-              {horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+              {horses.map(h => (
+                <option key={h.id} value={h.id}>{h.name}</option>
+              ))}
             </select>
           </label>
           <label className="text-sm">
@@ -2357,7 +2737,7 @@ function ManageRenewalsCard() {
           </label>
         </div>
 
-        <div className="grid sm:grid-cols-2 gap-3">
+        <div className="grid sm:grid-cols-3 gap-3">
           <label className="text-sm">
             Renew start
             <input
@@ -2377,6 +2757,20 @@ function ManageRenewalsCard() {
               value={form.renew_end}
               onChange={onChange}
               className="mt-1 w-full border rounded px-3 py-2"
+              required
+            />
+          </label>
+          <label className="text-sm">
+            Price per share
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              name="price_per_share"
+              value={form.price_per_share}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              placeholder="e.g. 49.00"
               required
             />
           </label>
@@ -2421,10 +2815,14 @@ function ManageRenewalsCard() {
                       <div>
                         <div className="font-medium">
                           {r.horse_name} — {r.term_label || "(No label)"} • {r.status.toUpperCase()}
-                          {processed && <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded bg-gray-100 border">Processed</span>}
+                          {processed && (
+                            <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded bg-gray-100 border">
+                              Processed
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-gray-600 mt-1">
-                          {r.renew_count} share{r.renew_count === 1 ? "" : "s"} renewed
+                          {r.renew_count} share{r.renew_count === 1 ? "" : "s"} renewed • Price: {fmtPrice(r.price_per_share)}
                         </div>
                         <div className="text-xs text-gray-600">
                           {new Date(r.renew_start).toLocaleString()} → {new Date(r.renew_end).toLocaleString()}
@@ -2482,7 +2880,9 @@ function ManageRenewalsCard() {
                             className="mt-1 w-full border rounded px-3 py-2"
                           >
                             <option value="">— Select horse —</option>
-                            {horses.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                            {horses.map(h => (
+                              <option key={h.id} value={h.id}>{h.name}</option>
+                            ))}
                           </select>
                         </label>
                         <label className="text-sm">
@@ -2495,7 +2895,7 @@ function ManageRenewalsCard() {
                         </label>
                       </div>
 
-                      <div className="grid sm:grid-cols-3 gap-3 mt-2">
+                      <div className="grid sm:grid-cols-4 gap-3 mt-2">
                         <label className="text-sm">
                           Start
                           <input
@@ -2525,6 +2925,18 @@ function ManageRenewalsCard() {
                             <option value="closed">Closed</option>
                           </select>
                         </label>
+                        <label className="text-sm">
+                          Price per share
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editForm.price_per_share}
+                            onChange={e => setEditForm(p => ({ ...p, price_per_share: e.target.value }))}
+                            className="mt-1 w-full border rounded px-3 py-2"
+                            placeholder="e.g. 49.00"
+                          />
+                        </label>
                       </div>
 
                       <label className="text-sm mt-2 block">
@@ -2538,10 +2950,16 @@ function ManageRenewalsCard() {
                       </label>
 
                       <div className="mt-3 flex gap-2">
-                        <button onClick={() => saveEdit(r.id)} className="px-3 py-1 bg-green-900 text-white rounded text-sm">
+                        <button
+                          onClick={() => saveEdit(r.id)}
+                          className="px-3 py-1 bg-green-900 text-white rounded text-sm"
+                        >
                           Save
                         </button>
-                        <button onClick={() => setEditingId(null)} className="px-3 py-1 border rounded text-sm">
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="px-3 py-1 border rounded text-sm"
+                        >
                           Cancel
                         </button>
                       </div>
@@ -2556,6 +2974,8 @@ function ManageRenewalsCard() {
     </section>
   );
 }
+
+
 
 /* ===========================
    Race Winnings — credit owners per share
@@ -2859,3 +3279,4 @@ function PayoutRequestsAdminCard() {
     </section>
   );
 }
+

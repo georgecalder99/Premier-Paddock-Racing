@@ -1,24 +1,17 @@
-// /src/pages/my-paddock.js
+// src/pages/my-paddock/index.js
+
 import Head from "next/head";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
 
-// Confetti must be client-only to avoid SSR window errors
+// Confetti must be client-only to avoid SSR window errors (used elsewhere on page)
 const Confetti = dynamic(() => import("react-confetti"), { ssr: false });
 
-/**
- * My Paddock
- * - Tabs: Owned | Wallet | Ballots | Voting | Updates
- * - Ballots sub-tabs: Open | My Results (reveal + confetti on win)
- * - Voting sub-tabs: Open | Results
- * - Updates feed shows admin-posted updates for horses the user owns
- */
-
-// ----- small hook for confetti sizing -----
+/* ============= Small util (kept because other sections use it) ============= */
 function useWindowSize() {
   const isClient = typeof window !== "undefined";
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -34,7 +27,7 @@ function useWindowSize() {
   return size;
 }
 
-/* ===== Admin helper (to hide/show vote results while open) ===== */
+/* ============= Admin helper (unchanged) ============= */
 const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
@@ -45,18 +38,87 @@ function useIsAdmin(session) {
   return Boolean(email && ADMIN_EMAILS.includes(email));
 }
 
+/* ============= Profile details card (single, hides on save) ============= */
+function ProfileDetailsCard({ session, onSaved }) {
+  const [fullName, setFullName] = React.useState(
+    session?.user?.user_metadata?.full_name ||
+      session?.user?.user_metadata?.name ||
+      ""
+  );
+  const [saving, setSaving] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+
+  async function saveName(e) {
+    e.preventDefault();
+    setSaving(true);
+    setMsg("");
+    try {
+      const clean = (fullName || "").trim();
+      if (!clean) {
+        setMsg("❌ Please enter your full name");
+        setSaving(false);
+        return;
+      }
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: clean },
+      });
+      if (error) throw error;
+
+      setMsg("✅ Saved");
+      // Let parent hide the card and update greeting immediately
+      onSaved?.(clean);
+    } catch (err) {
+      setMsg("❌ " + (err?.message || "Could not save"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="bg-white rounded-xl border p-5 shadow-sm">
+      <h3 className="text-lg font-semibold text-green-900">Your details</h3>
+      <form onSubmit={saveName} className="mt-3 flex gap-3 items-end">
+        <label className="flex-1 text-sm">
+          Full name
+          <input
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="e.g. George Calder"
+            className="mt-1 w-full border rounded px-3 py-2"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </form>
+      {msg ? <p className="text-sm mt-2">{msg}</p> : null}
+    </section>
+  );
+}
+
+/* ============================================================================
+   PAGE
+============================================================================ */
 export default function MyPaddock() {
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState("");
 
   // UI
-  const [activeTab, setActiveTab] = useState("owned"); // owned | wallet | ballots | voting | updates
+  const [activeTab, setActiveTab] = useState("owned"); // owned | wallet | ballots | voting | updates | renew
 
   // Data
   const [loadingOwned, setLoadingOwned] = useState(false);
   const [owned, setOwned] = useState([]); // [{ shares, horse: {...} }]
   const [ownedHorseIds, setOwnedHorseIds] = useState([]); // [uuid]
+
+  // NEW: hide details card once a name exists or once saved
+  const [hideDetails, setHideDetails] = useState(false);
 
   const redirectTo =
     typeof window !== "undefined" ? `${window.location.origin}/my-paddock` : undefined;
@@ -75,7 +137,9 @@ export default function MyPaddock() {
       }
     }
     init();
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) =>
+      setSession(s)
+    );
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -129,12 +193,15 @@ export default function MyPaddock() {
     loadOwned();
   }, [session]);
 
-  // --- Derived stats ---
-  const stats = useMemo(() => {
-    const totalHorses = owned.length;
-    const totalShares = owned.reduce((sum, o) => sum + (o.shares || 0), 0);
-    return { totalHorses, totalShares };
-  }, [owned]);
+  // Display name & hasName helpers
+  const hasName =
+    Boolean(session?.user?.user_metadata?.full_name?.trim()) ||
+    Boolean(session?.user?.user_metadata?.name?.trim());
+
+  const displayName =
+    session?.user?.user_metadata?.full_name ||
+    session?.user?.user_metadata?.name ||
+    (session?.user?.email?.split("@")[0] || "Owner");
 
   const isAdmin = useIsAdmin(session);
 
@@ -159,7 +226,9 @@ export default function MyPaddock() {
 
         <main className="max-w-md mx-auto px-6 py-12">
           <h1 className="text-3xl font-bold mb-2 text-green-900">My Paddock</h1>
-          <p className="text-gray-700 mb-6">Please sign in to access your owner dashboard.</p>
+          <p className="text-gray-700 mb-6">
+            Please sign in to access your owner dashboard.
+          </p>
           {err && <p className="text-red-600 mb-3">Error: {err}</p>}
           <Auth
             supabaseClient={supabase}
@@ -188,11 +257,14 @@ export default function MyPaddock() {
           <div>
             <h1 className="text-3xl font-bold text-green-900">My Paddock</h1>
             <p className="text-gray-600">
-              Welcome back, <strong>{session.user.email}</strong>
+              Welcome back, <strong>{displayName}</strong>
             </p>
           </div>
           <div className="flex gap-3">
-            <Link href="/horses" className="px-4 py-2 rounded-lg border text-green-900 hover:bg-gray-50">
+            <Link
+              href="/horses"
+              className="px-4 py-2 rounded-lg border text-green-900 hover:bg-gray-50"
+            >
               Browse Horses
             </Link>
             <button
@@ -204,10 +276,41 @@ export default function MyPaddock() {
           </div>
         </div>
 
+        {/* Profile card — only show if no name yet and not hidden */}
+        {!hideDetails && !hasName && (
+          <div className="mt-8">
+            <ProfileDetailsCard
+              session={session}
+              onSaved={(newName) => {
+                // Hide the card
+                setHideDetails(true);
+                // Update local session so header uses the new name immediately
+                setSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        user: {
+                          ...prev.user,
+                          user_metadata: {
+                            ...prev.user.user_metadata,
+                            full_name: newName,
+                          },
+                        },
+                      }
+                    : prev
+                );
+              }}
+            />
+          </div>
+        )}
+
         {/* Summary Cards */}
         <section className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <StatCard label="Horses owned" value={stats.totalHorses} />
-          <StatCard label="Total shares" value={stats.totalShares} />
+          <StatCard label="Horses owned" value={owned.length} />
+          <StatCard
+            label="Total shares"
+            value={owned.reduce((sum, o) => sum + (o.shares || 0), 0)}
+          />
         </section>
 
         {/* Sticky Sub-Nav */}
@@ -229,14 +332,16 @@ export default function MyPaddock() {
               Updates
             </TabButton>
             <TabButton id="renew" activeTab={activeTab} setActiveTab={setActiveTab}>
-  Renew
-</TabButton>
+              Renew
+            </TabButton>
           </div>
         </section>
 
-        {/* Tab Panels */}
+        {/* Tab Panels (keep your existing sections below) */}
         <section className="mt-6">
-          {activeTab === "owned" && <OwnedTab loading={loadingOwned} owned={owned} goTab={setActiveTab}/>}
+          {activeTab === "owned" && (
+            <OwnedTab loading={loadingOwned} owned={owned} goTab={setActiveTab} />
+          )}
           {activeTab === "wallet" && <WalletTab />}
           {activeTab === "ballots" && (
             <BallotsSection userId={session.user.id} ownedHorseIds={ownedHorseIds} />
@@ -250,16 +355,22 @@ export default function MyPaddock() {
           )}
           {activeTab === "updates" && <UpdatesTab ownedHorseIds={ownedHorseIds} />}
           {activeTab === "renew" && (
-  <RenewTab userId={session.user.id} owned={owned} />
-)}
+            <RenewTab
+              userId={session.user.id}
+              owned={owned}
+              userEmailProp={session.user.email}
+            />
+          )}
         </section>
       </main>
     </>
   );
 }
 
+/* ======= keep your existing helper components below (TabButton, StatCard, OwnedTab, WalletTab, BallotsSection, VotingSection, UpdatesTab, RenewTab, etc.) ======= */
+
 /* ===========================
-   Small UI helpers
+   Small UI helpers (unchanged)
 =========================== */
 function TabButton({ id, activeTab, setActiveTab, children }) {
   const isActive = activeTab === id;
@@ -267,7 +378,9 @@ function TabButton({ id, activeTab, setActiveTab, children }) {
     <button
       onClick={() => setActiveTab(id)}
       className={`px-4 py-2 rounded-lg border transition ${
-        isActive ? "bg-green-900 text-white border-green-900" : "bg-white text-green-900 border-gray-200 hover:bg-gray-50"
+        isActive
+          ? "bg-green-900 text-white border-green-900"
+          : "bg-white text-green-900 border-gray-200 hover:bg-gray-50"
       }`}
       aria-pressed={isActive}
       aria-controls={`panel-${id}`}
@@ -287,7 +400,7 @@ function StatCard({ label, value }) {
 }
 
 /* ===========================
-   Owned Tab
+   Owned Tab (unchanged)
 =========================== */
 function OwnedTab({ loading, owned, goTab }) {
   return (
@@ -332,43 +445,48 @@ function OwnedTab({ loading, owned, goTab }) {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-  <button
-    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
-    onClick={() => {
-      goTab("updates");
-      // optional smooth scroll
-      setTimeout(() => {
-        document.getElementById("panel-updates")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 0);
-    }}
-  >
-    View Updates
-  </button>
+              <button
+                className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+                onClick={() => {
+                  goTab("updates");
+                  setTimeout(() => {
+                    document
+                      .getElementById("panel-updates")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 0);
+                }}
+              >
+                View Updates
+              </button>
 
-  <button
-    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
-    onClick={() => {
-      goTab("ballots");
-      setTimeout(() => {
-        document.getElementById("panel-ballots")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 0);
-    }}
-  >
-    View Ballots
-  </button>
+              <button
+                className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+                onClick={() => {
+                  goTab("ballots");
+                  setTimeout(() => {
+                    document
+                      .getElementById("panel-ballots")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 0);
+                }}
+              >
+                View Ballots
+              </button>
 
-  <button
-    className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
-    onClick={() => {
-      goTab("voting");
-      setTimeout(() => {
-        document.getElementById("panel-voting")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 0);
-    }}
-  >
-    View Voting
-  </button>
-</div>
+              <button
+                className="flex-1 px-3 py-2 text-sm rounded border hover:bg-gray-50"
+                onClick={() => {
+                  goTab("voting");
+                  setTimeout(() => {
+                    document
+                      .getElementById("panel-voting")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 0);
+                }}
+              >
+                View Voting
+              </button>
+            </div>
           </article>
         ))}
       </div>
@@ -376,10 +494,8 @@ function OwnedTab({ loading, owned, goTab }) {
   );
 }
 
-
 /* ===========================
-   BALLOTS SECTION
-   Sub-tabs: open | results
+   BALLOTS SECTION header (kept)
 =========================== */
 function BallotsSection({ userId, ownedHorseIds }) {
   const [sub, setSub] = useState("open"); // open | results
@@ -388,12 +504,19 @@ function BallotsSection({ userId, ownedHorseIds }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <h2 className="text-2xl font-bold text-green-900">Ballots</h2>
         <div className="flex flex-wrap gap-2">
-          <SubTab id="open" sub={sub} setSub={setSub}>Open ballots</SubTab>
-          <SubTab id="results" sub={sub} setSub={setSub}>My results</SubTab>
+          <SubTab id="open" sub={sub} setSub={setSub}>
+            Open ballots
+          </SubTab>
+          <SubTab id="results" sub={sub} setSub={setSub}>
+            My results
+          </SubTab>
         </div>
       </div>
 
-      {sub === "open" && <OpenBallots userId={userId} ownedHorseIds={ownedHorseIds} />}
+      {/* These rely on your existing implementations elsewhere in this file */}
+      {sub === "open" && (
+        <OpenBallots userId={userId} ownedHorseIds={ownedHorseIds} />
+      )}
       {sub === "results" && <MyResults userId={userId} />}
     </div>
   );
@@ -405,7 +528,9 @@ function SubTab({ id, sub, setSub, children }) {
     <button
       onClick={() => setSub(id)}
       className={`px-3 py-2 rounded-lg border text-sm transition ${
-        active ? "bg-green-900 text-white border-green-900" : "bg-white text-green-900 border-gray-200 hover:bg-gray-50"
+        active
+          ? "bg-green-900 text-white border-green-900"
+          : "bg-white text-green-900 border-gray-200 hover:bg-gray-50"
       }`}
     >
       {children}
@@ -1216,17 +1341,49 @@ function UpdatesTab({ ownedHorseIds }) {
     </ul>
   );
 }
+
+
+
 /* ===========================
    Renew Tab
    - Shows renewal windows for horses the user owns
    - Displays “X days left”
-   - Lets owner record a renewal intent (shares = their current shares by default)
+   - Shows price per share and total for user's shares
+   - Sends confirmation email to the account holder after renewal
 =========================== */
-function RenewTab({ userId, owned = [] }) {
+function RenewTab({ userId, owned = [], userEmailProp = "" }) {
   const [loading, setLoading] = useState(true);
   const [cycles, setCycles] = useState([]);
+  const [userEmail, setUserEmail] = useState(userEmailProp || "");
 
-  // Make sure we don’t crash if owned is undefined or empty
+  // currency (GBP)
+  const gbp = useMemo(
+    () => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }),
+    []
+  );
+  const fmtMoney = (n) => {
+    if (n === null || n === undefined || n === "" || Number.isNaN(Number(n))) return "—";
+    return gbp.format(Number(n));
+  };
+
+  // Resolve logged-in user's email once (prefer prop, fallback to Supabase)
+  useEffect(() => {
+    (async () => {
+      try {
+        if (userEmailProp) {
+          setUserEmail(userEmailProp);
+          return;
+        }
+        const { data } = await supabase.auth.getUser();
+        const email = data?.user?.email || "";
+        setUserEmail(email);
+      } catch {
+        setUserEmail("");
+      }
+    })();
+  }, [userEmailProp]);
+
+  // Map horse_id -> shares owned, safe defaults
   const ownedByHorse = useMemo(() => {
     const safe = Array.isArray(owned) ? owned : [];
     return Object.fromEntries(
@@ -1251,30 +1408,36 @@ function RenewTab({ userId, owned = [] }) {
         return;
       }
 
-      const nowIso = new Date().toISOString();
-      const { data: rc } = await supabase
+      // Pull price_per_share from SQL
+      const { data: rc, error: rcErr } = await supabase
         .from("renew_cycles")
-        .select("id,horse_id,term_label,renew_start,renew_end,status")
+        .select("id,horse_id,term_label,renew_start,renew_end,status,price_per_share,notes")
         .in("horse_id", horseIds)
         .order("renew_end", { ascending: true });
+
+      if (rcErr) console.error("[RenewTab] renew_cycles error:", rcErr);
 
       const list = rc || [];
 
       // Get horse details
-      const { data: hs } = await supabase
+      const { data: hs, error: hErr } = await supabase
         .from("horses")
         .select("id,name,photo_url")
         .in("id", Array.from(new Set(list.map(r => r.horse_id))));
+
+      if (hErr) console.error("[RenewTab] horses error:", hErr);
 
       const horseMap = Object.fromEntries((hs || []).map(h => [h.id, h]));
 
       // Which renewals has this user already done?
       const cycleIds = list.map(r => r.id);
-      const { data: myResp } = await supabase
+      const { data: myResp, error: rrErr } = await supabase
         .from("renew_responses")
         .select("renew_cycle_id")
         .eq("user_id", userId)
         .in("renew_cycle_id", cycleIds);
+
+      if (rrErr) console.error("[RenewTab] renew_responses error:", rrErr);
 
       const renewedSet = new Set((myResp || []).map(x => x.renew_cycle_id));
 
@@ -1284,13 +1447,20 @@ function RenewTab({ userId, owned = [] }) {
         const endMs = new Date(c.renew_end).getTime();
         const openNow = c.status === "open" && now >= startMs && now <= endMs;
         const daysLeft = Math.max(0, Math.ceil((endMs - now) / (1000 * 60 * 60 * 24)));
+        const ownedShares = ownedByHorse[c.horse_id] || 0;
+
+        const price = c.price_per_share ?? null;
+        const total = price != null ? Number(ownedShares) * Number(price) : null;
+
         return {
           cycle: c,
           horse: horseMap[c.horse_id] || { name: "(Horse)" },
-          ownedShares: ownedByHorse[c.horse_id] || 0,
+          ownedShares,
           alreadyRenewed: renewedSet.has(c.id),
           openNow,
           daysLeft,
+          price,        // price per share
+          total,        // total price
         };
       });
 
@@ -1309,6 +1479,7 @@ function RenewTab({ userId, owned = [] }) {
       return;
     }
 
+    // 1) Record the renewal
     const { error } = await supabase.from("renew_responses").insert({
       renew_cycle_id: c.cycle.id,
       user_id: userId,
@@ -1320,6 +1491,43 @@ function RenewTab({ userId, owned = [] }) {
       return;
     }
 
+    // 2) Send the email — route name must match your file: /api/send-renewal-email
+try {
+  if (!userEmail) {
+    console.warn("[RenewTab] No user email; skipping email.");
+  } else {
+    const displayName =
+      (supabase.auth?.getUser && (await supabase.auth.getUser())?.data?.user?.user_metadata?.full_name) ||
+      (supabase.auth?.getUser && (await supabase.auth.getUser())?.data?.user?.user_metadata?.name) ||
+      (userEmail.split("@")[0]) ||
+      "Owner";
+
+    const resp = await fetch("/api/send-renewal-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: userEmail,
+        horseName: c.horse?.name || "Horse",
+        renewalPeriod: c.cycle?.term_label || null,
+        amount: c.total ?? null,
+        // NEW: pass the name so the API can use it
+        name: displayName,
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.error("Renewal email API error:", resp.status, text);
+    } else {
+      const j = await resp.json().catch(() => ({}));
+      console.log("Renewal email sent:", j);
+    }
+  }
+} catch (e) {
+  console.error("[RenewTab] Email fetch failed:", e);
+}
+
+    // 3) Mark as renewed in UI
     setCycles(items =>
       items.map(it =>
         it.cycle.id === c.cycle.id ? { ...it, alreadyRenewed: true } : it
@@ -1376,13 +1584,18 @@ function RenewTab({ userId, owned = [] }) {
                   )}
                 </div>
                 <p className="text-xs text-gray-600 mt-1">
-                  {new Date(c.cycle.renew_start).toLocaleString()} →{" "}
-                  {new Date(c.cycle.renew_end).toLocaleString()}
+                  {new Date(c.cycle.renew_start).toLocaleString()} → {new Date(c.cycle.renew_end).toLocaleString()}
                 </p>
-                <p className="text-sm text-gray-700 mt-2">
-                  You own <strong>{c.ownedShares}</strong> share
-                  {c.ownedShares === 1 ? "" : "s"} in this horse.
-                </p>
+                <div className="text-sm text-gray-700 mt-2 space-y-0.5">
+                  <p>
+                    You own <strong>{c.ownedShares}</strong> share{c.ownedShares === 1 ? "" : "s"} in this horse.
+                  </p>
+                  <p>Price per share: <strong>{fmtMoney(c.price)}</strong></p>
+                  <p>Total for your shares: <strong>{fmtMoney(c.total)}</strong></p>
+                  {c.cycle?.notes && (
+                    <p className="text-xs text-gray-600 mt-1">{c.cycle.notes}</p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1402,9 +1615,14 @@ function RenewTab({ userId, owned = [] }) {
                     onClick={() => renew(c)}
                     disabled={c.ownedShares <= 0}
                     className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
+                    title={
+                      c.price != null
+                        ? `Will email confirmation for ${fmtMoney(c.total)} (${fmtMoney(c.price)} × ${c.ownedShares})`
+                        : undefined
+                    }
                   >
-                    Renew {c.ownedShares} share
-                    {c.ownedShares === 1 ? "" : "s"}
+                    Renew {c.ownedShares} share{c.ownedShares === 1 ? "" : "s"}
+                    {c.price != null && <> — {fmtMoney(c.total)}</>}
                   </button>
                 </div>
               ) : c.alreadyRenewed ? (
@@ -1423,6 +1641,7 @@ function RenewTab({ userId, owned = [] }) {
     </div>
   );
 }
+
 /* --- Simple celebratory / consolation graphics --- */
 function WinCard() {
   return (
