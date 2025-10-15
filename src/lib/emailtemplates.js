@@ -4,6 +4,33 @@ const siteName = process.env.SITE_NAME || "Premier Paddock Racing";
 const siteUrl  = process.env.NEXT_PUBLIC_SITE_URL || "https://premierpaddockracing.co.uk";
 const logoUrl  = process.env.NEXT_PUBLIC_EMAIL_LOGO_URL || `${siteUrl}/logo.jpg`;
 
+/** Turn an email or raw string into a friendly display name. */
+function friendlyName(input = "") {
+  const raw = String(input || "").trim();
+  if (!raw) return "Owner";
+
+  // If it's an email, start with the part before @
+  let base = raw.includes("@") ? raw.split("@")[0] : raw;
+
+  // Replace separators with spaces, drop digits
+  base = base.replace(/[._-]+/g, " ").replace(/\d+/g, " ").replace(/\s+/g, " ").trim();
+
+  // If we still only have a single chunk like 'georgecalder', split roughly in half
+  if (base && !base.includes(" ") && base.length >= 6) {
+    const mid = Math.floor(base.length / 2);
+    base = `${base.slice(0, mid)} ${base.slice(mid)}`;
+  }
+
+  // Title case
+  return base
+    ? base
+        .split(" ")
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ")
+    : "Owner";
+}
+
 function shell({ title, bodyHtml }) {
   return `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -36,10 +63,13 @@ function shell({ title, bodyHtml }) {
 </body></html>`;
 }
 
+/* ---------------- Purchase ---------------- */
+
 export function purchaseEmailHTML({ name, horseName, qty, pricePerShare, total }) {
   const title = `Thanks for your purchase — ${horseName}`;
+  const display = friendlyName(name);
   const bodyHtml = `
-    <p style="margin:0 0 12px;font-size:16px;">Dear ${escapeHtml(name)},</p>
+    <p style="margin:0 0 12px;font-size:16px;">Dear ${escapeHtml(display)},</p>
     <p style="margin:0 0 16px;font-size:16px;">Thank you for purchasing shares in <strong>${escapeHtml(horseName)}</strong>!</p>
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:16px 0;border-collapse:collapse;width:100%;">
       <tr><td style="padding:8px 0;color:#6b7280;">Shares purchased</td><td style="padding:8px 0;text-align:right;"><strong>${Number(qty).toLocaleString()}</strong></td></tr>
@@ -51,10 +81,31 @@ export function purchaseEmailHTML({ name, horseName, qty, pricePerShare, total }
   return shell({ title, bodyHtml });
 }
 
+export function purchaseEmailText({ name, horseName, qty, pricePerShare, total }) {
+  const display = friendlyName(name);
+  return [
+    `Dear ${display},`,
+    ``,
+    `Thank you for purchasing shares in ${horseName}!`,
+    ``,
+    `Shares purchased: ${qty}`,
+    `Price per share: £${Number(pricePerShare || 0).toLocaleString()}`,
+    `Total: £${Number(total || 0).toLocaleString()}`,
+    ``,
+    `You can view your holdings and updates anytime in your owner portal.`,
+    ``,
+    `Warm regards,`,
+    `The ${siteName} Team`,
+  ].join("\n");
+}
+
+/* ---------------- Renewal ---------------- */
+
 export function renewalEmailHTML({ name, horseName, renewalPeriod, amount }) {
   const title = `Renewal confirmed — ${horseName}`;
+  const display = friendlyName(name);
   const bodyHtml = `
-    <p style="margin:0 0 12px;font-size:16px;">Dear ${escapeHtml(name)},</p>
+    <p style="margin:0 0 12px;font-size:16px;">Dear ${escapeHtml(display)},</p>
     <p style="margin:0 0 16px;font-size:16px;">Thank you for renewing your ownership in <strong>${escapeHtml(horseName)}</strong>.</p>
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:16px 0;border-collapse:collapse;width:100%;">
       <tr><td style="padding:8px 0;color:#6b7280;">Renewal period</td><td style="padding:8px 0;text-align:right;"><strong>${escapeHtml(renewalPeriod || "")}</strong></td></tr>
@@ -64,6 +115,25 @@ export function renewalEmailHTML({ name, horseName, renewalPeriod, amount }) {
     <p style="margin:20px 0 0;font-size:16px;">Warm regards,<br/>The ${escapeHtml(siteName)} Team</p>`;
   return shell({ title, bodyHtml });
 }
+
+export function renewalEmailText({ name, horseName, renewalPeriod, amount }) {
+  const display = friendlyName(name);
+  return [
+    `Dear ${display},`,
+    ``,
+    `Thank you for renewing your ownership in ${horseName}.`,
+    ``,
+    `Renewal period: ${renewalPeriod || ""}`,
+    `Amount: £${Number(amount || 0).toLocaleString()}`,
+    ``,
+    `We’re excited to have you on board for the next chapter.`,
+    ``,
+    `Warm regards,`,
+    `The ${siteName} Team`,
+  ].join("\n");
+}
+
+/* ---------------- Utils ---------------- */
 
 function escapeHtml(s = "") {
   return String(s)

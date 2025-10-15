@@ -1355,6 +1355,7 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
   const [loading, setLoading] = useState(true);
   const [cycles, setCycles] = useState([]);
   const [userEmail, setUserEmail] = useState(userEmailProp || "");
+  const [userName, setUserName] = useState(""); // ← NEW
 
   // currency (GBP)
   const gbp = useMemo(
@@ -1366,19 +1367,29 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
     return gbp.format(Number(n));
   };
 
-  // Resolve logged-in user's email once (prefer prop, fallback to Supabase)
+  // Resolve logged-in user's email + name once (prefer prop for email, but still fetch name)
   useEffect(() => {
     (async () => {
       try {
-        if (userEmailProp) {
-          setUserEmail(userEmailProp);
-          return;
-        }
+        if (userEmailProp) setUserEmail(userEmailProp);
+
         const { data } = await supabase.auth.getUser();
-        const email = data?.user?.email || "";
-        setUserEmail(email);
+        const u = data?.user;
+
+        // Only set email from Supabase if no prop was provided
+        if (!userEmailProp) {
+          setUserEmail(u?.email || "");
+        }
+
+        const derivedName =
+          u?.user_metadata?.full_name ||
+          u?.user_metadata?.name ||
+          (u?.email ? u.email.split("@")[0] : "") ||
+          "";
+        setUserName(derivedName);
       } catch {
-        setUserEmail("");
+        if (!userEmailProp) setUserEmail("");
+        setUserName("");
       }
     })();
   }, [userEmailProp]);
@@ -1388,8 +1399,8 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
     const safe = Array.isArray(owned) ? owned : [];
     return Object.fromEntries(
       safe
-        .filter(o => o && o.horse && o.horse.id)
-        .map(o => [o.horse.id, o.shares || 0])
+        .filter((o) => o && o.horse && o.horse.id)
+        .map((o) => [o.horse.id, o.shares || 0])
     );
   }, [owned]);
 
@@ -1399,8 +1410,8 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
 
       const safeOwned = Array.isArray(owned) ? owned : [];
       const horseIds = safeOwned
-        .filter(o => o && o.horse && o.horse.id)
-        .map(o => o.horse.id);
+        .filter((o) => o && o.horse && o.horse.id)
+        .map((o) => o.horse.id);
 
       if (!horseIds.length) {
         setCycles([]);
@@ -1411,7 +1422,9 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
       // Pull price_per_share from SQL
       const { data: rc, error: rcErr } = await supabase
         .from("renew_cycles")
-        .select("id,horse_id,term_label,renew_start,renew_end,status,price_per_share,notes")
+        .select(
+          "id,horse_id,term_label,renew_start,renew_end,status,price_per_share,notes"
+        )
         .in("horse_id", horseIds)
         .order("renew_end", { ascending: true });
 
@@ -1423,14 +1436,17 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
       const { data: hs, error: hErr } = await supabase
         .from("horses")
         .select("id,name,photo_url")
-        .in("id", Array.from(new Set(list.map(r => r.horse_id))));
+        .in(
+          "id",
+          Array.from(new Set(list.map((r) => r.horse_id)))
+        );
 
       if (hErr) console.error("[RenewTab] horses error:", hErr);
 
-      const horseMap = Object.fromEntries((hs || []).map(h => [h.id, h]));
+      const horseMap = Object.fromEntries((hs || []).map((h) => [h.id, h]));
 
       // Which renewals has this user already done?
-      const cycleIds = list.map(r => r.id);
+      const cycleIds = list.map((r) => r.id);
       const { data: myResp, error: rrErr } = await supabase
         .from("renew_responses")
         .select("renew_cycle_id")
@@ -1439,18 +1455,22 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
 
       if (rrErr) console.error("[RenewTab] renew_responses error:", rrErr);
 
-      const renewedSet = new Set((myResp || []).map(x => x.renew_cycle_id));
+      const renewedSet = new Set((myResp || []).map((x) => x.renew_cycle_id));
 
       const now = Date.now();
-      const enriched = list.map(c => {
+      const enriched = list.map((c) => {
         const startMs = new Date(c.renew_start).getTime();
         const endMs = new Date(c.renew_end).getTime();
         const openNow = c.status === "open" && now >= startMs && now <= endMs;
-        const daysLeft = Math.max(0, Math.ceil((endMs - now) / (1000 * 60 * 60 * 24)));
+        const daysLeft = Math.max(
+          0,
+          Math.ceil((endMs - now) / (1000 * 60 * 60 * 24))
+        );
         const ownedShares = ownedByHorse[c.horse_id] || 0;
 
         const price = c.price_per_share ?? null;
-        const total = price != null ? Number(ownedShares) * Number(price) : null;
+        const total =
+          price != null ? Number(ownedShares) * Number(price) : null;
 
         return {
           cycle: c,
@@ -1459,8 +1479,8 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
           alreadyRenewed: renewedSet.has(c.id),
           openNow,
           daysLeft,
-          price,        // price per share
-          total,        // total price
+          price, // price per share
+          total, // total price
         };
       });
 
@@ -1492,45 +1512,44 @@ function RenewTab({ userId, owned = [], userEmailProp = "" }) {
     }
 
     // 2) Send the email — route name must match your file: /api/send-renewal-email
-try {
-  if (!userEmail) {
-    console.warn("[RenewTab] No user email; skipping email.");
-  } else {
-    const displayName =
-      (supabase.auth?.getUser && (await supabase.auth.getUser())?.data?.user?.user_metadata?.full_name) ||
-      (supabase.auth?.getUser && (await supabase.auth.getUser())?.data?.user?.user_metadata?.name) ||
-      (userEmail.split("@")[0]) ||
-      "Owner";
+    try {
+      if (!userEmail) {
+        console.warn("[RenewTab] No user email; skipping email.");
+      } else {
+        const resp = await fetch("/api/send-renewal-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: userEmail,
+            horseName: c.horse?.name || "Horse",
+            renewalPeriod: c.cycle?.term_label || null,
+            amount: c.total ?? null,
+            name: userName || "Owner", // ← send the name we resolved earlier
+          }),
+        });
 
-    const resp = await fetch("/api/send-renewal-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to: userEmail,
-        horseName: c.horse?.name || "Horse",
-        renewalPeriod: c.cycle?.term_label || null,
-        amount: c.total ?? null,
-        // NEW: pass the name so the API can use it
-        name: displayName,
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      console.error("Renewal email API error:", resp.status, text);
-    } else {
-      const j = await resp.json().catch(() => ({}));
-      console.log("Renewal email sent:", j);
+        if (!resp.ok) {
+          const text = await resp.text();
+          console.error(
+            "Renewal email API error:",
+            resp.status,
+            text
+          );
+        } else {
+          const j = await resp.json().catch(() => ({}));
+          console.log("Renewal email sent:", j);
+        }
+      }
+    } catch (e) {
+      console.error("[RenewTab] Email fetch failed:", e);
     }
-  }
-} catch (e) {
-  console.error("[RenewTab] Email fetch failed:", e);
-}
 
     // 3) Mark as renewed in UI
-    setCycles(items =>
-      items.map(it =>
-        it.cycle.id === c.cycle.id ? { ...it, alreadyRenewed: true } : it
+    setCycles((items) =>
+      items.map((it) =>
+        it.cycle.id === c.cycle.id
+          ? { ...it, alreadyRenewed: true }
+          : it
       )
     );
   }
@@ -1539,7 +1558,9 @@ try {
   if (!cycles.length)
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm">
-        <h3 className="font-semibold text-green-900">You have no horses to renew yet.</h3>
+        <h3 className="font-semibold text-green-900">
+          You have no horses to renew yet.
+        </h3>
         <p className="text-sm text-gray-600 mt-1">
           When a renewal window opens, it’ll appear here.
         </p>
@@ -1548,8 +1569,11 @@ try {
 
   return (
     <div className="space-y-4">
-      {cycles.map(c => (
-        <article key={c.cycle.id} className="rounded-xl border bg-white p-5 shadow-sm">
+      {cycles.map((c) => (
+        <article
+          key={c.cycle.id}
+          className="rounded-xl border bg-white p-5 shadow-sm"
+        >
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               {c.horse?.photo_url && (
@@ -1584,16 +1608,25 @@ try {
                   )}
                 </div>
                 <p className="text-xs text-gray-600 mt-1">
-                  {new Date(c.cycle.renew_start).toLocaleString()} → {new Date(c.cycle.renew_end).toLocaleString()}
+                  {new Date(c.cycle.renew_start).toLocaleString()} →{" "}
+                  {new Date(c.cycle.renew_end).toLocaleString()}
                 </p>
                 <div className="text-sm text-gray-700 mt-2 space-y-0.5">
                   <p>
-                    You own <strong>{c.ownedShares}</strong> share{c.ownedShares === 1 ? "" : "s"} in this horse.
+                    You own <strong>{c.ownedShares}</strong> share
+                    {c.ownedShares === 1 ? "" : "s"} in this horse.
                   </p>
-                  <p>Price per share: <strong>{fmtMoney(c.price)}</strong></p>
-                  <p>Total for your shares: <strong>{fmtMoney(c.total)}</strong></p>
+                  <p>
+                    Price per share: <strong>{fmtMoney(c.price)}</strong>
+                  </p>
+                  <p>
+                    Total for your shares:{" "}
+                    <strong>{fmtMoney(c.total)}</strong>
+                  </p>
                   {c.cycle?.notes && (
-                    <p className="text-xs text-gray-600 mt-1">{c.cycle.notes}</p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {c.cycle.notes}
+                    </p>
                   )}
                 </div>
               </div>
@@ -1617,11 +1650,14 @@ try {
                     className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
                     title={
                       c.price != null
-                        ? `Will email confirmation for ${fmtMoney(c.total)} (${fmtMoney(c.price)} × ${c.ownedShares})`
+                        ? `Will email confirmation for ${fmtMoney(
+                            c.total
+                          )} (${fmtMoney(c.price)} × ${c.ownedShares})`
                         : undefined
                     }
                   >
-                    Renew {c.ownedShares} share{c.ownedShares === 1 ? "" : "s"}
+                    Renew {c.ownedShares} share
+                    {c.ownedShares === 1 ? "" : "s"}
                     {c.price != null && <> — {fmtMoney(c.total)}</>}
                   </button>
                 </div>

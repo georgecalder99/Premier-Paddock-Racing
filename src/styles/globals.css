@@ -24,3 +24,45 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+/* --- Minimal system dark mode polish (no JS, no component edits) --- */
+@media (prefers-color-scheme: dark) {
+  /* Tell browsers we support dark UI */
+  html { color-scheme: dark; }
+
+  /* Page background & default text */
+  body {
+    background: #0b1220;   /* deep slate */
+    color: #e5e7eb;        /* slate-200 */
+  }
+
+  /* Your common shells (cards/panels use bg-white + border) */
+  .bg-white,
+  .bg-white\/90 { /* matches "bg-white/90" too */
+    background-color: #0f172a !important; /* slate-900-ish */
+  }
+  .border,
+  .border-b,
+  .border-t,
+  .border-l,
+  .border-r {
+    border-color: #334155 !important; /* slate-700 */
+  }
+
+  /* Typical text colors you use */
+  .text-gray-700 { color: #e2e8f0 !important; } /* slate-200 */
+  .text-gray-600 { color: #cbd5e1 !important; } /* slate-300 */
+
+  /* Gentle hover backgrounds so items still feel interactive */
+  .hover\:bg-gray-50:hover,
+  .hover\:bg-gray-100:hover {
+    background-color: rgba(255,255,255,0.05) !important;
+  }
+
+  /* Light green backgrounds look harsh on dark — soften them */
+  .bg-green-50 { background-color: rgba(16,185,129,0.12) !important; }
+
+  /* Optional: thin divider color */
+  .border-b { border-bottom-color: #334155 !important; }
+}
