@@ -7,6 +7,7 @@ import Footer from '../components/Footer';
 import { supabase } from '../lib/supabaseClient';
 
 export default function App({ Component, pageProps }) {
+  return <Component {...pageProps} />;
   const [session, setSession] = useState(null);
 
   useEffect(() => {
