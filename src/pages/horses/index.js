@@ -1,15 +1,23 @@
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useMemo, useState } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 
 export default function HorsesPage() {
+  // ⬇️ ADD
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  if (!hydrated) return null; // or a tiny skeleton/blank div
+
   const [horses, setHorses] = useState([]);
   const [session, setSession] = useState(null);
   const [ownerships, setOwnerships] = useState({});   // { horseId: sharesOwnedByCurrentUser }
   const [soldByHorse, setSoldByHorse] = useState({}); // { horseId: totalSoldAcrossAllUsers }
   const [qtyByHorse, setQtyByHorse] = useState({});   // { horseId: selectedQty }
   const [loading, setLoading] = useState(true);
+  // ...rest of your file unchanged
+
 
   // ---------- Load horses + auth ----------
   useEffect(() => {
