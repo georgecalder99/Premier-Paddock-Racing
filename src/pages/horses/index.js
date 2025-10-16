@@ -4,20 +4,22 @@ import Head from "next/head";
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 
-export default function HorsesPage() {
-  // ⬇️ ADD
+/** ClientOnly wrapper to prevent pre-hydration flicker without touching hook order */
+function ClientOnly({ children }) {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
-  if (!hydrated) return null; // or a tiny skeleton/blank div
+  if (!hydrated) return <div style={{ visibility: "hidden" }} />;
+  return children;
+}
 
+export default function HorsesPage() {
+  // ✅ Hooks all at the top-level (no early returns above)
   const [horses, setHorses] = useState([]);
   const [session, setSession] = useState(null);
   const [ownerships, setOwnerships] = useState({});   // { horseId: sharesOwnedByCurrentUser }
   const [soldByHorse, setSoldByHorse] = useState({}); // { horseId: totalSoldAcrossAllUsers }
   const [qtyByHorse, setQtyByHorse] = useState({});   // { horseId: selectedQty }
   const [loading, setLoading] = useState(true);
-  // ...rest of your file unchanged
-
 
   // ---------- Load horses + auth ----------
   useEffect(() => {
@@ -69,7 +71,9 @@ export default function HorsesPage() {
     }
 
     load();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // ---------- Load current user's ownerships ----------
@@ -96,7 +100,9 @@ export default function HorsesPage() {
     }
 
     loadOwnerships();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [session]);
 
   // ---------- Helpers ----------
@@ -210,187 +216,189 @@ export default function HorsesPage() {
       console.error("Refresh sold map error:", afterErr);
     }
 
-    // NOTE: removed syncSubscriberToUserSafe(); not needed with DB-side view
-
-
     // --- send confirmation email (non-blocking) ---
-try {
-  const to = session.user?.email || "";
-  if (to) {
-    const pricePerShare = Number(horse.share_price ?? 0);
-    const total = pricePerShare * n;
+    try {
+      const to = session.user?.email || "";
+      if (to) {
+        const pricePerShare = Number(horse.share_price ?? 0);
+        const total = pricePerShare * n;
+        const resp = await fetch("/api/send-purchase-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to,
+            horseName: horse.name || "Horse",
+            qty: n,
+            pricePerShare,
+            total,
+          }),
+        });
 
-    // fire-and-forget, but await once to surface errors in console
-    const resp = await fetch("/api/send-purchase-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        to,
-        horseName: horse.name || "Horse",
-        qty: n,
-        pricePerShare,
-        total,
-      }),
-    });
-
-    if (!resp.ok) {
-      const txt = await resp.text();
-      console.error("[purchase email] API error:", resp.status, txt);
-    } else {
-      const j = await resp.json().catch(() => ({}));
-      console.log("[purchase email] sent:", j);
+        if (!resp.ok) {
+          const txt = await resp.text();
+          console.error("[purchase email] API error:", resp.status, txt);
+        } else {
+          const j = await resp.json().catch(() => ({}));
+          console.log("[purchase email] sent:", j);
+        }
+      } else {
+        console.warn("[purchase email] No user email on session, skipping.");
+      }
+    } catch (e) {
+      console.error("[purchase email] fetch failed:", e);
     }
-  } else {
-    console.warn("[purchase email] No user email on session, skipping.");
-  }
-} catch (e) {
-  console.error("[purchase email] fetch failed:", e);
-}
 
     // ✅ Redirect to confirmation
-    window.location.href = `/purchase/success?horse=${encodeURIComponent(horse.id)}&qty=${encodeURIComponent(n)}`;
+    window.location.href = `/purchase/success?horse=${encodeURIComponent(
+      horse.id
+    )}&qty=${encodeURIComponent(n)}`;
   }
 
+  // ✅ Single return with ClientOnly gate to avoid flicker; no conditional hooks anywhere
   return (
-    <>
-      <Head>
-        <title>Our Horses | Premier Paddock Racing</title>
-        <meta
-          name="description"
-          content="Browse available racehorses and buy affordable shares with Premier Paddock Racing."
-        />
-      </Head>
+    <ClientOnly>
+      <>
+        <Head>
+          <title>Our Horses | Premier Paddock Racing</title>
+          <meta
+            name="description"
+            content="Browse available racehorses and buy affordable shares with Premier Paddock Racing."
+          />
+        </Head>
 
-      <main className="bg-white">
-        <HorsesHero />
+        <main className="bg-white">
+          <HorsesHero />
 
-        <section className="max-w-7xl mx-auto px-6 py-12">
-          <div className="flex items-end justify-between mb-8">
-            <h1 className="text-3xl font-bold">Current Horses</h1>
-            <Link href="/" className="text-green-800 hover:underline">
-              ← Back to home
-            </Link>
-          </div>
-
-          {loading ? (
-            <p className="text-gray-600">Loading horses…</p>
-          ) : horsesWithComputed.length === 0 ? (
-            <p className="text-gray-600">No horses listed yet. Sign up on our homepage to be the first to know when we launch!.</p>
-          ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {horsesWithComputed.map((h) => {
-                const ownedShares = ownerships[h.id] || 0;
-                const qty = qtyByHorse[h.id] || 1;
-                const soldOut = h.remaining <= 0;
-
-                return (
-                  <div key={h.id} className="bg-white rounded-lg shadow p-4">
-                    <img
-                      src={h.photo_url || "https://placehold.co/400x250?text=Horse"}
-                      alt={h.name}
-                      className="w-full h-48 object-cover rounded"
-                    />
-                    <h3 className="mt-3 font-semibold text-lg">{h.name}</h3>
-                    <p className="text-sm text-gray-500">
-                      {h.specialty || "—"} • Trainer: {h.trainer || "—"}
-                    </p>
-
-                    <div className="mt-3 flex justify-between items-center">
-                      <span className="font-bold">
-                        £{h.share_price ?? 60} <span className="font-normal">/ share</span>
-                      </span>
-                      <span className="text-sm text-gray-600">
-                        {h.total.toLocaleString()} shares
-                      </span>
-                    </div>
-
-                    {/* Progress */}
-                    <div className="mt-3">
-                      <div className="h-2 w-full bg-gray-200 rounded">
-                        <div
-                          className="h-2 bg-green-600 rounded"
-                          style={{ width: `${h.pct}%` }}
-                          aria-label={`Sold ${h.pct}%`}
-                        />
-                      </div>
-                      <div className="mt-1 text-xs text-gray-600 flex justify-between">
-                        <span>{h.sold.toLocaleString()} sold</span>
-                        <span>
-                          {h.remaining > 0
-                            ? `${h.remaining.toLocaleString()} available`
-                            : "Sold out"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Footer: Owned/Sold out + Read more */}
-                    <div className="mt-3 flex justify-between items-center">
-                      {soldOut ? (
-                        <span className="px-3 py-1 bg-gray-300 text-gray-700 rounded text-sm">
-                          Sold out
-                        </span>
-                      ) : ownedShares > 0 ? (
-                        <span className="px-3 py-1 bg-green-600 text-white rounded text-sm">
-                          Owned ({ownedShares})
-                        </span>
-                      ) : (
-                        <span />
-                      )}
-
-                      <Link
-                        href={`/horses/${h.id}`}
-                        className="text-sm text-green-800 hover:underline"
-                        title="Read and learn more"
-                      >
-                        Read more →
-                      </Link>
-                    </div>
-
-                    {/* Per-card QUICK BUY */}
-                    <div className="mt-4 border-t pt-4 flex items-end justify-between gap-3">
-                      <label className="text-sm text-gray-700">
-                        Qty:&nbsp;
-                        <select
-                          value={qty}
-                          onChange={(e) => setQty(h.id, e.target.value)}
-                          className="border rounded px-2 py-1 text-sm"
-                          disabled={soldOut}
-                          aria-label={`Select quantity for ${h.name}`}
-                        >
-                          {Array.from({ length: 100 }, (_, i) => i + 1).map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      {!session ? (
-                        <button
-                          onClick={() => (window.location.href = "/my-paddock")}
-                          className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800"
-                        >
-                          Sign in to purchase shares
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => buyShares(h, qty)}
-                          className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
-                          disabled={soldOut}
-                          title={soldOut ? "Sold out" : "Quick Buy"}
-                        >
-                          {soldOut ? "Sold out" : "Quick Buy"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+          <section className="max-w-7xl mx-auto px-6 py-12">
+            <div className="flex items-end justify-between mb-8">
+              <h1 className="text-3xl font-bold">Current Horses</h1>
+              <Link href="/" className="text-green-800 hover:underline">
+                ← Back to home
+              </Link>
             </div>
-          )}
-        </section>
-      </main>
-    </>
+
+            {loading ? (
+              <p className="text-gray-600">Loading horses…</p>
+            ) : horsesWithComputed.length === 0 ? (
+              <p className="text-gray-600">
+                No horses listed yet. Sign up on our homepage to be the first to know when we launch!.
+              </p>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {horsesWithComputed.map((h) => {
+                  const ownedShares = ownerships[h.id] || 0;
+                  const qty = qtyByHorse[h.id] || 1;
+                  const soldOut = h.remaining <= 0;
+
+                  return (
+                    <div key={h.id} className="bg-white rounded-lg shadow p-4">
+                      <img
+                        src={h.photo_url || "https://placehold.co/400x250?text=Horse"}
+                        alt={h.name}
+                        className="w-full h-48 object-cover rounded"
+                      />
+                      <h3 className="mt-3 font-semibold text-lg">{h.name}</h3>
+                      <p className="text-sm text-gray-500">
+                        {h.specialty || "—"} • Trainer: {h.trainer || "—"}
+                      </p>
+
+                      <div className="mt-3 flex justify-between items-center">
+                        <span className="font-bold">
+                          £{h.share_price ?? 60} <span className="font-normal">/ share</span>
+                        </span>
+                        <span className="text-sm text-gray-600">
+                          {h.total.toLocaleString()} shares
+                        </span>
+                      </div>
+
+                      {/* Progress */}
+                      <div className="mt-3">
+                        <div className="h-2 w-full bg-gray-200 rounded">
+                          <div
+                            className="h-2 bg-green-600 rounded"
+                            style={{ width: `${h.pct}%` }}
+                            aria-label={`Sold ${h.pct}%`}
+                          />
+                        </div>
+                        <div className="mt-1 text-xs text-gray-600 flex justify-between">
+                          <span>{h.sold.toLocaleString()} sold</span>
+                          <span>
+                            {h.remaining > 0
+                              ? `${h.remaining.toLocaleString()} available`
+                              : "Sold out"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Footer: Owned/Sold out + Read more */}
+                      <div className="mt-3 flex justify-between items-center">
+                        {soldOut ? (
+                          <span className="px-3 py-1 bg-gray-300 text-gray-700 rounded text-sm">
+                            Sold out
+                          </span>
+                        ) : ownedShares > 0 ? (
+                          <span className="px-3 py-1 bg-green-600 text-white rounded text-sm">
+                            Owned ({ownedShares})
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+
+                        <Link
+                          href={`/horses/${h.id}`}
+                          className="text-sm text-green-800 hover:underline"
+                          title="Read and learn more"
+                        >
+                          Read more →
+                        </Link>
+                      </div>
+
+                      {/* Per-card QUICK BUY */}
+                      <div className="mt-4 border-t pt-4 flex items-end justify-between gap-3">
+                        <label className="text-sm text-gray-700">
+                          Qty:&nbsp;
+                          <select
+                            value={qty}
+                            onChange={(e) => setQty(h.id, e.target.value)}
+                            className="border rounded px-2 py-1 text-sm"
+                            disabled={soldOut}
+                            aria-label={`Select quantity for ${h.name}`}
+                          >
+                            {Array.from({ length: 100 }, (_, i) => i + 1).map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {!session ? (
+                          <button
+                            onClick={() => (window.location.href = "/my-paddock")}
+                            className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800"
+                          >
+                            Sign in to purchase shares
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => buyShares(h, qty)}
+                            className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
+                            disabled={soldOut}
+                            title={soldOut ? "Sold out" : "Quick Buy"}
+                          >
+                            {soldOut ? "Sold out" : "Quick Buy"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </main>
+      </>
+    </ClientOnly>
   );
 }
 
