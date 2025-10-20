@@ -35,22 +35,20 @@ export default function AdminPage() {
   }, [session]);
 
   useEffect(() => {
-    async function init() {
+    let sub;
+    (async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
       setReady(true);
-    }
-    init();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
-      setSession(s)
-    );
-    return () => sub.subscription.unsubscribe();
+      const { data: s } = supabase.auth.onAuthStateChange((_e, sess) => setSession(sess));
+      sub = s;
+    })();
+    return () => sub?.subscription?.unsubscribe?.();
   }, []);
 
-  if (!ready)
-    return (
-      <main className="max-w-5xl mx-auto px-6 py-12">Loading…</main>
-    );
+  if (!ready) {
+    return <main className="max-w-5xl mx-auto px-6 py-12">Loading…</main>;
+  }
 
   if (!session) {
     return (
@@ -59,11 +57,7 @@ export default function AdminPage() {
           <title>Admin | Premier Paddock Racing</title>
         </Head>
         <h1 className="text-2xl font-bold mb-4">Admin sign in</h1>
-        <Auth
-          supabaseClient={supabase}
-          appearance={{ theme: ThemeSupa }}
-          providers={[]}
-        />
+        <Auth supabaseClient={supabase} appearance={{ theme: ThemeSupa }} providers={[]} />
       </main>
     );
   }
@@ -76,23 +70,19 @@ export default function AdminPage() {
         </Head>
         <h1 className="text-2xl font-bold text-red-700">Access denied</h1>
         <p className="mt-2 text-gray-700">
-          Your account <strong>{session.user.email}</strong> is not allowed
-          here.
+          Your account <strong>{session.user.email}</strong> is not allowed here.
         </p>
         <p className="mt-2 text-sm text-gray-600">
-          Add your email to{" "}
-          <code>NEXT_PUBLIC_ADMIN_EMAILS</code> in{" "}
-          <code>.env.local</code>.
+          Add your email to <code>NEXT_PUBLIC_ADMIN_EMAILS</code> in <code>.env.local</code>.
         </p>
         <div className="mt-6">
-          <Link href="/" className="text-green-800 underline">
-            ← Back to home
-          </Link>
+          <Link href="/" className="text-green-800 underline">← Back to home</Link>
         </div>
       </main>
     );
   }
 
+  // ✅ SINGLE, valid return – no duplicates
   return (
     <main className="max-w-7xl mx-auto px-6 py-10">
       <Head>
@@ -100,6 +90,7 @@ export default function AdminPage() {
         <meta name="robots" content="noindex" />
       </Head>
 
+      {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-green-900">Admin</h1>
@@ -108,10 +99,7 @@ export default function AdminPage() {
           </p>
         </div>
         <div className="flex gap-3">
-          <Link
-            href="/my-paddock"
-            className="px-4 py-2 rounded-lg border text-green-900 hover:bg-gray-50"
-          >
+          <Link href="/my-paddock" className="px-4 py-2 rounded-lg border text-green-900 hover:bg-gray-50">
             My Paddock
           </Link>
           <button
@@ -123,41 +111,52 @@ export default function AdminPage() {
         </div>
       </header>
 
-     {/* Cards grid */}
-<div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
-  <CreateBallotCard />
-  <RecentBallotsCard />
+      {/* Cards grid */}
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <CreateBallotCard />
+        <RecentBallotsCard />
 
-  {/* NEW voting admin cards */}
-  <CreateVoteCard />
-  <ManageVotesCard />
+        {/* Voting */}
+        <CreateVoteCard />
+        <ManageVotesCard />
 
-  {/* Wallet admin tools */}
-<RaceWinningsCreditCard />
-<PayoutRequestsAdminCard />
+        {/* Wallet */}
+        <RaceWinningsCreditCard />
+        <PayoutRequestsAdminCard />
 
-  {/* ✅ Add this */}
-  <ManageRenewalsCard />
+        {/* Renewals */}
+        <ManageRenewalsCard />
 
-  <AdminUpdatesCard />
+        {/* Updates */}
+        <AdminUpdatesCard />
 
-  {/* All horses list + rich editor */}
-  <AllHorsesCard
-    onEdit={(id) => setEditingHorseId(id)}
-    onCreateNew={() => setEditingHorseId(null)}
-    refreshKey={horsesRefreshKey}
-    onRefreshed={() => {}}
-  />
-  <HorseEditorCard
-    horseId={editingHorseId}
-    setHorseId={setEditingHorseId}
-    onSaved={() => setHorsesRefreshKey((k) => k + 1)}
-  />
-</div>
+        {/* All horses list (full width) */}
+        <div className="lg:col-span-2">
+          <AllHorsesCard
+            onEdit={(id) => setEditingHorseId(id)}
+            onCreateNew={() => setEditingHorseId(null)}
+            refreshKey={horsesRefreshKey}
+            onRefreshed={() => {}}
+          />
+        </div>
+
+        {/* Full-width Horse Editor */}
+        <div className="lg:col-span-2">
+          <HorseEditorCard
+            horseId={editingHorseId}
+            setHorseId={setEditingHorseId}
+            onSaved={() => setHorsesRefreshKey((k) => k + 1)}
+          />
+        </div>
+
+        {/* Full-width Active promotions below */}
+        <div className="lg:col-span-2">
+          <ActivePromotionsList />
+        </div>
+      </div>
     </main>
   );
 }
-
 /* ===========================
    Create ballot
 =========================== */
@@ -1305,16 +1304,19 @@ function AllHorsesCard({ onEdit, onCreateNew, refreshKey }) {
 }
 
 /* ===========================
-   Create OR Edit Horse (rich)
+   Create OR Edit Horse (rich) — people-based promo only
+   - No legacy promo fields/logic
+   - People-based promo is edited inline and saved together
 =========================== */
 function HorseEditorCard({ horseId, setHorseId, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [loadingExisting, setLoadingExisting] = useState(false);
 
-  // NEW: rich blocks state
+  // Rich blocks state
   const [aboutBlocks, setAboutBlocks] = useState([]);
 
+  // ----- Horse fields (NO legacy promo fields) -----
   const [form, setForm] = useState({
     // basics
     name: "",
@@ -1345,15 +1347,27 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
     breeder: "",
     form_text: "",
     // featured
-    featured_position: "", // "", "1", "2", "3"
+    featured_position: "",
   });
 
-  // load existing when horseId changes
+  // ----- People-based promo fields (live in promotions table) -----
+  const [peoplePromo, setPeoplePromo] = useState({
+    promo_id: null,
+    enabled: false,
+    quota: "",
+    min_shares_required: "2",
+    label: "",
+    reward: "",
+    start_at: "",
+    end_at: "",
+  });
+
+  // Load horse + latest people promo
   useEffect(() => {
     async function loadExisting() {
       if (!horseId) {
-        setForm((f) => ({
-          ...f,
+        // new horse defaults
+        setForm({
           name: "",
           trainer: "",
           specialty: "",
@@ -1378,14 +1392,25 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
           color: "",
           breeder: "",
           form_text: "",
-          featured_position: ""
-        }));
-        setAboutBlocks([]); // NEW: clear blocks when starting a new horse
+          featured_position: "",
+        });
+        setAboutBlocks([]);
+        setPeoplePromo({
+          promo_id: null,
+          enabled: false,
+          quota: "",
+          min_shares_required: "2",
+          label: "",
+          reward: "",
+          start_at: "",
+          end_at: "",
+        });
         setMsg("");
         setLoadingExisting(false);
         return;
       }
       setLoadingExisting(true);
+
       const { data: h, error } = await supabase
         .from("horses")
         .select("*, featured_position, about_blocks")
@@ -1426,8 +1451,31 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
         featured_position: h.featured_position ? String(h.featured_position) : "",
       });
 
-      // NEW: load existing blocks
       setAboutBlocks(Array.isArray(h.about_blocks) ? h.about_blocks : []);
+
+      // load latest people-based promo for this horse
+      const { data: promos } = await supabase
+        .from("promotions")
+        .select("*")
+        .eq("horse_id", horseId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const p = Array.isArray(promos) ? promos[0] : null;
+      if (p) {
+        setPeoplePromo({
+          promo_id: p.id,
+          enabled: !!p.enabled,
+          quota: p.quota == null ? "" : String(p.quota),
+          min_shares_required: p.min_shares_required == null ? "2" : String(p.min_shares_required),
+          label: p.label || "",
+          reward: p.reward || "",
+          start_at: p.start_at ? isoLocal(p.start_at) : "",
+          end_at: p.end_at ? isoLocal(p.end_at) : "",
+        });
+      } else {
+        setPeoplePromo((pp) => ({ ...pp, promo_id: null, enabled: false }));
+      }
 
       setLoadingExisting(false);
       setMsg("");
@@ -1435,9 +1483,14 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
     loadExisting();
   }, [horseId]);
 
-  function onChange(e) {
-    const { name, value } = e.target;
-    setForm((p) => ({ ...p, [name]: value }));
+  function onChangeHorse(e) {
+    const { name, value, type } = e.target;
+    setForm((p) => ({ ...p, [name]: type === "number" ? Number(value) : value }));
+  }
+
+  function onChangePeople(e) {
+    const { name, value, type, checked } = e.target;
+    setPeoplePromo((pp) => ({ ...pp, [name]: type === "checkbox" ? checked : value }));
   }
 
   async function save(e) {
@@ -1446,13 +1499,10 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
     setMsg("");
 
     try {
-      if (!form.name.trim()) {
-        setMsg("Please add a horse name.");
-        setSaving(false);
-        return;
-      }
+      if (!form.name.trim()) throw new Error("Please add a horse name.");
 
-      const payload = {
+      // Build horse payload
+      const horsePayload = {
         name: form.name.trim(),
         trainer: form.trainer?.trim() || null,
         specialty: form.specialty?.trim() || null,
@@ -1478,41 +1528,95 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
         breeder: form.breeder?.trim() || null,
         form_text: form.form_text?.trim() || null,
         featured_position: form.featured_position ? Number(form.featured_position) : null,
-
-        // NEW: save blocks
         about_blocks: Array.isArray(aboutBlocks) ? aboutBlocks : [],
       };
 
-      // ensure featured slot uniqueness (clear previous holder)
-      if (payload.featured_position === 1 || payload.featured_position === 2 || payload.featured_position === 3) {
-        const slot = payload.featured_position;
+      // ensure featured slot uniqueness
+      if ([1, 2, 3].includes(horsePayload.featured_position)) {
+        const slot = horsePayload.featured_position;
         const q = supabase.from("horses").update({ featured_position: null }).eq("featured_position", slot);
         if (horseId) q.neq("id", horseId);
         await q;
       }
 
-      if (horseId) {
-        const { error } = await supabase.from("horses").update(payload).eq("id", horseId);
+      // 1) Upsert horse
+      let id = horseId;
+      if (id) {
+        const { error } = await supabase.from("horses").update(horsePayload).eq("id", id);
         if (error) throw error;
-        setMsg("✅ Saved changes.");
       } else {
-        const { data, error } = await supabase.from("horses").insert(payload).select("id").single();
+        const { data, error } = await supabase.from("horses").insert(horsePayload).select("id").single();
         if (error) throw error;
-        setMsg("✅ Horse created.");
-        setHorseId(data?.id || null);
+        id = data?.id;
+        setHorseId(id || null);
       }
 
+      // 2) Upsert people-based promo (only validate when enabled)
+      if (peoplePromo.enabled) {
+        const quota = peoplePromo.quota === "" ? null : Number(peoplePromo.quota);
+        const minReq = peoplePromo.min_shares_required === "" ? null : Number(peoplePromo.min_shares_required);
+        if (!quota || quota <= 0) throw new Error("Please enter a positive quota for the people-based promo.");
+        if (!minReq || minReq <= 0) throw new Error("Please enter a positive minimum shares required.");
+
+        const nowISO = new Date().toISOString();
+        const payload = {
+          horse_id: id,
+          enabled: true,
+          quota,
+          min_shares_required: minReq,
+          label: peoplePromo.label?.trim() || null,
+          reward: peoplePromo.reward?.trim() || null,
+          // Default the start to "now" if none provided so past purchases don't count
+          start_at: peoplePromo.start_at
+            ? new Date(peoplePromo.start_at).toISOString()
+            : nowISO,
+          end_at: peoplePromo.end_at ? new Date(peoplePromo.end_at).toISOString() : null,
+        };
+
+        if (peoplePromo.promo_id) {
+          const { error } = await supabase.from("promotions").update(payload).eq("id", peoplePromo.promo_id);
+          if (error) throw error;
+        } else {
+          const { data, error } = await supabase.from("promotions").insert(payload).select("id").single();
+          if (error) throw error;
+          setPeoplePromo((pp) => ({ ...pp, promo_id: data?.id || null }));
+        }
+
+        // Turn OFF any other people-based promos for this horse (keep only the current one enabled)
+        await supabase
+          .from("promotions")
+          .update({ enabled: false })
+          .eq("horse_id", id)
+          .neq("id", peoplePromo.promo_id || undefined);
+      } else {
+        // If disabled in the form, make sure promos are disabled
+        if (peoplePromo.promo_id) {
+          await supabase.from("promotions").update({ enabled: false }).eq("id", peoplePromo.promo_id);
+        } else {
+          await supabase.from("promotions").update({ enabled: false }).eq("horse_id", id);
+        }
+      }
+
+      setMsg("✅ Saved.");
       onSaved?.();
     } catch (err) {
       console.error(err);
-      setMsg("Failed to save horse. " + (err?.message || ""));
+      setMsg("Failed to save. " + (err?.message || ""));
     } finally {
       setSaving(false);
     }
   }
 
+  const previewPeople = (() => {
+    const people = peoplePromo.quota ? Number(peoplePromo.quota) : null;
+    const min = peoplePromo.min_shares_required ? Number(peoplePromo.min_shares_required) : null;
+    if (!people || !min) return "—";
+    const base = peoplePromo.label?.trim() || `First ${people} people who buy ≥${min} shares`;
+    return `${base}${peoplePromo.reward ? ` — ${peoplePromo.reward}` : ""}`;
+  })();
+
   return (
-    <section className="bg-white rounded-xl border shadow-sm p-6 lg:col-span-2">
+    <section className="bg-white rounded-xl border shadow-sm p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-green-900">
           {horseId ? "Edit horse" : "Create horse"}
@@ -1535,38 +1639,38 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
           <div className="grid md:grid-cols-2 gap-4">
             <label className="block text-sm">
               Name
-              <input name="name" value={form.name} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" required />
+              <input name="name" value={form.name} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" required />
             </label>
             <label className="block text-sm">
               Trainer
-              <input name="trainer" value={form.trainer} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" />
+              <input name="trainer" value={form.trainer} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" />
             </label>
             <label className="block text-sm">
               Specialty
-              <input name="specialty" value={form.specialty} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" placeholder="e.g. Flat / Jumps" />
+              <input name="specialty" value={form.specialty} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" placeholder="e.g. Flat / Jumps" />
             </label>
             <label className="block text-sm">
               Trainer Photo URL
-              <input name="trainer_photo_url" value={form.trainer_photo_url} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://…" />
+              <input name="trainer_photo_url" value={form.trainer_photo_url} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://…" />
             </label>
           </div>
 
           <div className="grid md:grid-cols-4 gap-4">
             <label className="block text-sm">
               Share price (£)
-              <input type="number" min="0" name="share_price" value={form.share_price} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" />
+              <input type="number" min="0" name="share_price" value={form.share_price} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" />
             </label>
             <label className="block text-sm">
               Total shares
-              <input type="number" min="0" name="total_shares" value={form.total_shares} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" />
+              <input type="number" min="0" name="total_shares" value={form.total_shares} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" />
             </label>
             <label className="block text-sm">
               Main Photo URL
-              <input name="photo_url" value={form.photo_url} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://…" />
+              <input name="photo_url" value={form.photo_url} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://…" />
             </label>
             <label className="block text-sm">
               Extra Photos (CSV)
-              <input name="photos_csv" value={form.photos_csv} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://a.jpg, https://b.jpg, https://c.jpg" />
+              <input name="photos_csv" value={form.photos_csv} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2" placeholder="https://a.jpg, https://b.jpg, https://c.jpg" />
             </label>
           </div>
 
@@ -1574,57 +1678,93 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
           <div className="grid md:grid-cols-2 gap-4">
             <label className="block text-sm">
               About the horse (legacy fallback)
-              <textarea name="description" value={form.description} onChange={onChange} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Big description…" />
+              <textarea name="description" value={form.description} onChange={onChangeHorse} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Big description…" />
             </label>
             <label className="block text-sm">
               Trainer bio
-              <textarea name="trainer_bio" value={form.trainer_bio} onChange={onChange} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Trainer background…" />
+              <textarea name="trainer_bio" value={form.trainer_bio} onChange={onChangeHorse} rows={5} className="mt-1 w-full border rounded px-3 py-2" placeholder="Trainer background…" />
             </label>
           </div>
 
-          {/* NEW: Rich About blocks editor */}
+          {/* Rich About blocks editor */}
           <AboutBlocksEditor value={aboutBlocks} onChange={setAboutBlocks} />
 
           {/* Costs */}
           <div className="bg-gray-50 rounded-lg border p-4">
             <h3 className="font-semibold text-green-900">Share breakdown & costs</h3>
             <div className="grid md:grid-cols-3 gap-3 mt-3">
-              <NumField label="Horse value" name="horse_value" value={form.horse_value} onChange={onChange} />
-              <NumField label="Training & vet bills" name="training_vet" value={form.training_vet} onChange={onChange} />
-              <NumField label="Insurance & race fees" name="insurance_race" value={form.insurance_race} onChange={onChange} />
-              <NumField label="Management fee" name="management_fee" value={form.management_fee} onChange={onChange} />
-              <NumField label="Contingency" name="contingency" value={form.contingency} onChange={onChange} />
-              <NumField label="Total (optional)" name="breakdown_total" value={form.breakdown_total} onChange={onChange} />
+              <NumField label="Horse value" name="horse_value" value={form.horse_value} onChange={onChangeHorse} />
+              <NumField label="Training & vet bills" name="training_vet" value={form.training_vet} onChange={onChangeHorse} />
+              <NumField label="Insurance & race fees" name="insurance_race" value={form.insurance_race} onChange={onChangeHorse} />
+              <NumField label="Management fee" name="management_fee" value={form.management_fee} onChange={onChangeHorse} />
+              <NumField label="Contingency" name="contingency" value={form.contingency} onChange={onChangeHorse} />
+              <NumField label="Total (optional)" name="breakdown_total" value={form.breakdown_total} onChange={onChangeHorse} />
             </div>
           </div>
 
           {/* Breeding + Form */}
           <div className="grid md:grid-cols-2 gap-4">
             <div className="grid md:grid-cols-2 gap-3">
-              <TextField label="Sire" name="sire" value={form.sire} onChange={onChange} />
-              <TextField label="Dam" name="dam" value={form.dam} onChange={onChange} />
-              <TextField label="Damsire" name="damsire" value={form.damsire} onChange={onChange} />
-              <TextField label="Foaled" name="foaled" value={form.foaled} onChange={onChange} />
-              <TextField label="Sex" name="sex" value={form.sex} onChange={onChange} />
-              <TextField label="Colour" name="color" value={form.color} onChange={onChange} />
-              <TextField label="Breeder" name="breeder" value={form.breeder} onChange={onChange} />
+              <TextField label="Sire" name="sire" value={form.sire} onChange={onChangeHorse} />
+              <TextField label="Dam" name="dam" value={form.dam} onChange={onChangeHorse} />
+              <TextField label="Damsire" name="damsire" value={form.damsire} onChange={onChangeHorse} />
+              <TextField label="Foaled" name="foaled" value={form.foaled} onChange={onChangeHorse} />
+              <TextField label="Sex" name="sex" value={form.sex} onChange={onChangeHorse} />
+              <TextField label="Colour" name="color" value={form.color} onChange={onChangeHorse} />
+              <TextField label="Breeder" name="breeder" value={form.breeder} onChange={onChangeHorse} />
             </div>
             <label className="block text-sm">
               Recent form
-              <textarea name="form_text" value={form.form_text} onChange={onChange} rows={6} className="mt-1 w-full border rounded px-3 py-2" />
+              <textarea name="form_text" value={form.form_text} onChange={onChangeHorse} rows={6} className="mt-1 w-full border rounded px-3 py-2" />
             </label>
+          </div>
+
+          {/* Promotion — people-based (distinct buyers, in promotions table) */}
+          <div className={`rounded-lg border p-4 ${peoplePromo.enabled ? "bg-amber-50" : "bg-gray-50"}`}>
+            <h3 className="font-semibold text-amber-900">Promotion — people-based (distinct buyers)</h3>
+            <p className="text-xs text-amber-900/80 mt-1">Example: “First 100 people who buy ≥2 shares get a free share.”</p>
+            <div className="mt-2 grid md:grid-cols-2 gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="enabled" checked={!!peoplePromo.enabled} onChange={onChangePeople} />
+                Enable people-based promo
+              </label>
+              <label className="block text-sm">
+                Quota (people)
+                <input type="number" min="1" name="quota" value={peoplePromo.quota} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <label className="block text-sm">
+                Min shares required
+                <input type="number" min="1" name="min_shares_required" value={peoplePromo.min_shares_required} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <label className="block text-sm">
+                Label (optional)
+                <input name="label" value={peoplePromo.label} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <label className="block text-sm md:col-span-2">
+                Reward (shown to users)
+                <input name="reward" value={peoplePromo.reward} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <label className="block text-sm">
+                Starts at (optional)
+                <input type="datetime-local" name="start_at" value={peoplePromo.start_at} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <label className="block text-sm">
+                Ends at (optional)
+                <input type="datetime-local" name="end_at" value={peoplePromo.end_at} onChange={onChangePeople} className="mt-1 w-full border rounded px-3 py-2" disabled={!peoplePromo.enabled} />
+              </label>
+              <div className="md:col-span-2">
+                <div className="rounded-md bg-white border p-3 text-sm text-gray-800">
+                  <strong>Preview:</strong> {previewPeople}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Featured slot */}
           <div className="grid sm:grid-cols-3 gap-4">
             <label className="block text-sm">
               Featured slot (home)
-              <select
-                name="featured_position"
-                value={form.featured_position}
-                onChange={onChange}
-                className="mt-1 w-full border rounded px-3 py-2"
-              >
+              <select name="featured_position" value={form.featured_position} onChange={onChangeHorse} className="mt-1 w-full border rounded px-3 py-2">
                 <option value="">Don’t show</option>
                 <option value="1">Position #1</option>
                 <option value="2">Position #2</option>
@@ -1647,6 +1787,308 @@ function HorseEditorCard({ horseId, setHorseId, onSaved }) {
   );
 }
 
+/* ===========================
+   PeoplePromoEditorInline (per-horse)
+   - No legacy promo toggling
+=========================== */
+function PeoplePromoEditorInline({ horseId }) {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [promoId, setPromoId] = useState(null);
+  const [stats, setStats] = useState(null); // {claimed,left,qualifiers_count}
+
+  const [form, setForm] = useState({
+    enabled: false,
+    quota: "",
+    min_shares_required: "2",
+    label: "",
+    reward: "",
+    start_at: "",
+    end_at: "",
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!horseId) {
+        setPromoId(null);
+        setForm({
+          enabled: false,
+          quota: "",
+          min_shares_required: "2",
+          label: "",
+          reward: "",
+          start_at: "",
+          end_at: "",
+        });
+        setStats(null);
+        return;
+      }
+      setLoading(true);
+      setMsg("");
+
+      // Load latest promo for this horse
+      const { data, error } = await supabase
+        .from("promotions")
+        .select("*")
+        .eq("horse_id", horseId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (!mounted) return;
+
+      if (error) {
+        console.error("[PeoplePromoEditorInline] load error:", error);
+        setMsg("Could not load promotion.");
+        setLoading(false);
+        return;
+      }
+
+      const p = Array.isArray(data) ? data[0] : null;
+      if (p) {
+        setPromoId(p.id);
+        setForm({
+          enabled: !!p.enabled,
+          quota: p.quota == null ? "" : String(p.quota),
+          min_shares_required:
+            p.min_shares_required == null ? "2" : String(p.min_shares_required),
+          label: p.label || "",
+          reward: p.reward || "",
+          start_at: p.start_at ? isoLocal(p.start_at) : "",
+          end_at: p.end_at ? isoLocal(p.end_at) : "",
+        });
+
+        // live stats (optional view)
+        try {
+          const { data: s } = await supabase
+            .from("promotion_people_stats")
+            .select("promotion_id, qualifiers_count")
+            .eq("promotion_id", p.id)
+            .maybeSingle();
+
+          if (mounted) {
+            const claimed = Number(s?.qualifiers_count || 0);
+            const quota = Number(p.quota || 0);
+            setStats({
+              claimed,
+              left: Math.max(0, quota - claimed),
+              qualifiers_count: claimed,
+            });
+          }
+        } catch {
+          if (mounted) setStats(null);
+        }
+      } else {
+        setPromoId(null);
+        setForm((f) => ({ ...f, enabled: false }));
+        setStats(null);
+      }
+
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [horseId]);
+
+  function onChange(e) {
+    const { name, value, type, checked } = e.target;
+    setForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!horseId) return;
+
+    setSaving(true);
+    setMsg("");
+
+    try {
+      // Basic validation (only if enabled)
+      if (form.enabled) {
+        if (!form.quota || Number(form.quota) <= 0) {
+          setMsg("Please enter a positive quota (number of people).");
+          setSaving(false);
+          return;
+        }
+        if (!form.min_shares_required || Number(form.min_shares_required) <= 0) {
+          setMsg("Please enter a positive minimum shares required.");
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Build payload
+      const nowISO = new Date().toISOString();
+      const payload = {
+        horse_id: horseId,
+        enabled: !!form.enabled,
+        quota: form.quota === "" ? null : Number(form.quota),
+        min_shares_required: form.min_shares_required === "" ? null : Number(form.min_shares_required),
+        label: form.label?.trim() || null,
+        reward: form.reward?.trim() || null,
+        start_at: form.enabled
+          ? (form.start_at ? new Date(form.start_at).toISOString() : nowISO)
+          : (form.start_at ? new Date(form.start_at).toISOString() : null),
+        end_at: form.end_at ? new Date(form.end_at).toISOString() : null,
+      };
+
+      // Upsert
+      let currentId = promoId;
+      if (currentId) {
+        const { error } = await supabase.from("promotions").update(payload).eq("id", currentId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from("promotions")
+          .insert(payload)
+          .select("id")
+          .single();
+        if (error) throw error;
+        currentId = data?.id ?? null;
+        setPromoId(currentId);
+      }
+
+      // Keep only this promo enabled for this horse when enabling
+      if (payload.enabled && currentId) {
+        await supabase
+          .from("promotions")
+          .update({ enabled: false })
+          .eq("horse_id", horseId)
+          .neq("id", currentId);
+      }
+
+      setMsg("✅ Promotion saved.");
+    } catch (err) {
+      console.error(err);
+      setMsg("Failed to save promotion. " + (err?.message || ""));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const preview = (() => {
+    const people = form.quota ? Number(form.quota) : null;
+    const min = form.min_shares_required ? Number(form.min_shares_required) : null;
+    if (!people || !min) return "—";
+    const base = form.label?.trim() || `First ${people} people who buy ≥${min} shares`;
+    return `${base}${form.reward ? ` — ${form.reward}` : ""}`;
+  })();
+
+  return (
+    <div className="bg-amber-50 rounded-lg border p-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-amber-900">
+          Promotion (people-based — distinct buyers)
+        </h3>
+        {loading && <span className="text-xs text-amber-900/70">Loading…</span>}
+      </div>
+
+      <p className="text-sm text-amber-900/80 mt-1">
+        Example: <em>“First 100 people who buy ≥2 shares get a free share.”</em>
+      </p>
+
+      <form onSubmit={save} className="mt-3 grid md:grid-cols-2 gap-4">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="enabled" checked={!!form.enabled} onChange={onChange} />
+          Enable promotion
+        </label>
+
+        <label className="block text-sm">
+          Quota (number of people)
+          <input
+            type="number" min="1" name="quota" value={form.quota}
+            onChange={onChange} className="mt-1 w-full border rounded px-3 py-2"
+            placeholder="e.g. 100" disabled={!form.enabled}
+          />
+        </label>
+
+        <label className="block text-sm">
+          Min shares required (per purchase)
+          <input
+            type="number" min="1" name="min_shares_required" value={form.min_shares_required}
+            onChange={onChange} className="mt-1 w-full border rounded px-3 py-2"
+            placeholder="e.g. 2" disabled={!form.enabled}
+          />
+        </label>
+
+        <label className="block text-sm">
+          Label (optional)
+          <input
+            name="label" value={form.label} onChange={onChange}
+            className="mt-1 w-full border rounded px-3 py-2"
+            placeholder='e.g. "First 100 buyers"' disabled={!form.enabled}
+          />
+        </label>
+
+        <label className="block text-sm md:col-span-2">
+          Reward (shown to users)
+          <input
+            name="reward" value={form.reward} onChange={onChange}
+            className="mt-1 w-full border rounded px-3 py-2"
+            placeholder='e.g. "1 free share" or "Free yard visit ballot"' disabled={!form.enabled}
+          />
+        </label>
+
+        <label className="block text-sm">
+          Starts at (optional)
+          <input
+            type="datetime-local" name="start_at" value={form.start_at} onChange={onChange}
+            className="mt-1 w-full border rounded px-3 py-2" disabled={!form.enabled}
+          />
+        </label>
+
+        <label className="block text-sm">
+          Ends at (optional)
+          <input
+            type="datetime-local" name="end_at" value={form.end_at} onChange={onChange}
+            className="mt-1 w-full border rounded px-3 py-2" disabled={!form.enabled}
+          />
+        </label>
+
+        {/* Preview & live stats */}
+        <div className="md:col-span-2 space-y-2">
+          <div className="rounded-md bg-white border p-3 text-sm text-gray-800">
+            <strong>Preview:</strong> {preview}
+          </div>
+          {promoId ? (
+            <div className="rounded-md bg-white border p-3 text-sm text-gray-800 flex items-center justify-between">
+              <div>
+                <strong>Live status:</strong>{" "}
+                {stats ? (
+                  <>
+                    {stats.claimed} claimed, {stats.left} {stats.left === 1 ? "left" : "left"}
+                  </>
+                ) : (
+                  "—"
+                )}
+              </div>
+              <a
+                href={`/api/promotions/export?promotion_id=${encodeURIComponent(promoId)}`}
+                className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
+              >
+                Download CSV
+              </a>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="md:col-span-2 flex items-center gap-3">
+          <button
+            type="submit" disabled={saving}
+            className="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : promoId ? "Save promotion" : "Create promotion"}
+          </button>
+          {msg && <span className="text-sm">{msg}</span>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ===========================
+   AboutBlocksEditor
+=========================== */
 function AboutBlocksEditor({ value = [], onChange }) {
   const blocks = Array.isArray(value) ? value : [];
 
@@ -1657,20 +2099,7 @@ function AboutBlocksEditor({ value = [], onChange }) {
         : type === "image"
         ? { type: "image", url: "", caption: "" }
         : { type: "video", url: "", caption: "" };
-    onChange([...blocks, blank]);
-  }
-
-  function AboutBlocksEditor({ value = [], onChange }) {
-  const blocks = Array.isArray(value) ? value : [];
-
-  function add(type) {
-    const blank =
-      type === "text"
-        ? { type: "text", body: "" }
-        : type === "image"
-        ? { type: "image", url: "", caption: "" }
-        : { type: "video", url: "", caption: "" };
-    onChange([...blocks, blank]);
+    onChange([...(blocks || []), blank]);
   }
 
   function update(i, patch) {
@@ -1783,151 +2212,7 @@ function AboutBlocksEditor({ value = [], onChange }) {
                       className="mt-1 w-full border rounded px-3 py-2"
                     />
                   </label>
-                  {blk.url ? (
-                    <div className="sm:col-span-2">
-                      {isVideoFile(blk.url) ? (
-                        <video className="w-full rounded border" src={blk.url} controls playsInline />
-                      ) : (
-                        <div className="aspect-video">
-                          <iframe
-                            className="w-full h-full rounded border"
-                            src={blk.url}
-                            title="Video preview"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
-  function update(i, patch) {
-    onChange(blocks.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
-  }
-
-  function move(i, dir) {
-    const j = i + dir;
-    if (j < 0 || j >= blocks.length) return;
-    const copy = blocks.slice();
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-    onChange(copy);
-  }
-
-  function remove(i) {
-    onChange(blocks.filter((_, idx) => idx !== i));
-  }
-
-  // simple inline previews for image & video
-  function isVideoFile(u = "") {
-    return /\.(mp4|webm|ogg)(\?|#|$)/i.test(u);
-  }
-
-  return (
-    <div className="bg-gray-50 rounded-lg border p-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-green-900">About — content blocks</h3>
-        <div className="flex gap-2">
-          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("text")}>+ Text</button>
-          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("image")}>+ Image</button>
-          <button type="button" className="px-2 py-1 border rounded text-sm" onClick={() => add("video")}>+ Video</button>
-        </div>
-      </div>
-
-      {blocks.length === 0 ? (
-        <p className="text-sm text-gray-600 mt-2">No blocks yet. Add text, image or video in any order.</p>
-      ) : (
-        <ul className="mt-3 space-y-3">
-          {blocks.map((blk, i) => (
-            <li key={i} className="rounded border bg-white p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wide text-gray-500">
-                  Block #{i + 1} — {blk.type}
-                </span>
-                <div className="flex gap-2">
-                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, -1)}>↑</button>
-                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => move(i, +1)}>↓</button>
-                  <button type="button" className="px-2 py-1 border rounded text-xs text-red-700" onClick={() => remove(i)}>Delete</button>
-                </div>
-              </div>
-
-              {/* TEXT */}
-              {blk.type === "text" && (
-                <label className="block text-sm mt-2">
-                  Body
-                  <textarea
-                    value={blk.body || ""}
-                    onChange={(e) => update(i, { body: e.target.value })}
-                    rows={5}
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    placeholder="Write the paragraph…"
-                  />
-                </label>
-              )}
-
-              {/* IMAGE */}
-              {blk.type === "image" && (
-                <div className="grid sm:grid-cols-2 gap-3 mt-2">
-                  <label className="block text-sm">
-                    Image URL
-                    <input
-                      value={blk.url || ""}
-                      onChange={(e) => update(i, { url: e.target.value })}
-                      className="mt-1 w-full border rounded px-3 py-2"
-                      placeholder="https://…"
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    Caption (optional)
-                    <input
-                      value={blk.caption || ""}
-                      onChange={(e) => update(i, { caption: e.target.value })}
-                      className="mt-1 w-full border rounded px-3 py-2"
-                      placeholder="e.g. First canter"
-                    />
-                  </label>
-                  {blk.url ? (
-                    <div className="sm:col-span-2">
-                      <img
-                        src={blk.url}
-                        alt={blk.caption || ""}
-                        className="mt-2 max-h-48 rounded border object-contain"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              {/* VIDEO */}
-              {blk.type === "video" && (
-                <div className="grid sm:grid-cols-2 gap-3 mt-2">
-                  <label className="block text-sm sm:col-span-2">
-                    Video URL (YouTube/Vimeo/MP4)
-                    <input
-                      value={blk.url || ""}
-                      onChange={(e) => update(i, { url: e.target.value })}
-                      className="mt-1 w-full border rounded px-3 py-2"
-                      placeholder="https://youtube.com/watch?v=…  or  https://files/clip.mp4"
-                    />
-                  </label>
-                  <label className="block text-sm sm:col-span-2">
-                    Caption (optional)
-                    <input
-                      value={blk.caption || ""}
-                      onChange={(e) => update(i, { caption: e.target.value })}
-                      className="mt-1 w-full border rounded px-3 py-2"
-                    />
-                  </label>
-
-                  {/* very light preview */}
                   {blk.url ? (
                     <div className="sm:col-span-2">
                       {isVideoFile(blk.url) ? (
@@ -1971,6 +2256,22 @@ function TextField({ label, name, value, onChange }) {
       <input name={name} value={value} onChange={onChange} className="mt-1 w-full border rounded px-3 py-2" />
     </label>
   );
+}
+
+// Convert a DB ISO string to local datetime-local value (yyyy-mm-ddThh:mm)
+function isoLocal(iso) {
+  try {
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const mi = pad(d.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  } catch {
+    return "";
+  }
 }
 
 /* ===========================
@@ -3280,3 +3581,334 @@ function PayoutRequestsAdminCard() {
   );
 }
 
+/* ===========================
+   Active + Past promotions (list + disable/delete + auto-finish)
+   - Active: supabase.rpc("active_promotions_list")
+   - Past:   supabase.rpc("past_promotions_list")
+   - Normalizes ID fields so buttons always work (uses row._id)
+=========================== */
+function ActivePromotionsList() {
+  // imports needed at top of your page:
+  // import { useEffect, useState } from "react";
+  // import Link from "next/link";
+  // import { supabase } from "../../lib/supabaseClient";
+
+  const [activeRows, setActiveRows] = useState([]);
+  const [pastRows, setPastRows] = useState([]);
+  const [loadingA, setLoadingA] = useState(true);
+  const [loadingP, setLoadingP] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [autoDisabledIds, setAutoDisabledIds] = useState(() => new Set());
+
+  // ---- helpers ----
+  const d = (x) => {
+    try { return x ? new Date(x).toLocaleString() : "—"; } catch { return "—"; }
+  };
+
+  // normalize a row coming from Active RPC
+  function normalizeActiveRow(r) {
+    return {
+      ...r,
+      _id: r.promotion_id ?? r.id, // prefer promotion_id for active rows
+    };
+  }
+
+  // normalize a row coming from Past RPC or view
+  function normalizePastRow(r) {
+    const _id = r.id ?? r.promotion_id;
+    const horse_name = r.horse_name ?? r.horses?.name ?? "Horse";
+    return {
+      ...r,
+      _id,
+      horse_name,
+    };
+  }
+
+  async function loadActive() {
+    setLoadingA(true);
+    setMsg("");
+
+    const { data, error } = await supabase.rpc("active_promotions_list");
+    if (error) {
+      console.error("[Promos] load active error:", error);
+      setActiveRows([]);
+      setMsg(error.message || "Failed to load active promotions.");
+      setLoadingA(false);
+      return;
+    }
+
+    const rows = Array.isArray(data) ? data.map(normalizeActiveRow) : [];
+    setActiveRows(rows);
+    setLoadingA(false);
+
+    // AUTO-DISABLE if finished (left <= 0)
+    const toFinish = rows.filter(
+      (r) => typeof r.left === "number" && r.left <= 0 && !autoDisabledIds.has(r._id)
+    );
+
+    for (const r of toFinish) {
+      try {
+        const { error: upErr } = await supabase
+          .from("promotions")
+          .update({ enabled: false })
+          .eq("id", r._id);
+        if (!upErr) {
+          setAutoDisabledIds((prev) => {
+            const next = new Set(prev);
+            next.add(r._id);
+            return next;
+          });
+        }
+      } catch (e) {
+        console.warn("[Promos] auto-disable failed for", r._id, e);
+      }
+    }
+
+    if (toFinish.length) {
+      await Promise.all([loadActive(), loadPast()]);
+    }
+  }
+
+  async function loadPast() {
+    setLoadingP(true);
+
+    const { data, error } = await supabase.rpc("past_promotions_list");
+    if (error) {
+      console.error("[Promos] load past error:", error);
+      setPastRows([]);
+      setLoadingP(false);
+      return;
+    }
+
+    const rows = Array.isArray(data) ? data.map(normalizePastRow) : [];
+    setPastRows(rows);
+    setLoadingP(false);
+  }
+
+  useEffect(() => {
+    loadActive();
+    loadPast();
+
+    // purchases affect claimed/left counters
+    const ch1 = supabase
+      .channel("promo-purchases")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "purchases" },
+        () => loadActive()
+      )
+      .subscribe();
+
+    // any promotion change (enable/disable/edit/delete)
+    const ch2 = supabase
+      .channel("promo-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "promotions" },
+        () => {
+          loadActive();
+          loadPast();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch1);
+      supabase.removeChannel(ch2);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- actions ---
+  async function disablePromotion(promotionId) {
+    const row = activeRows.find((r) => r._id === promotionId);
+    if (!window.confirm("Disable this promotion? It will stop counting and move to Past promotions.")) return;
+
+    const { error } = await supabase.from("promotions").update({ enabled: false }).eq("id", promotionId);
+    if (error) {
+      alert(error.message || "Failed to disable promotion.");
+      return;
+    }
+
+    // optimistic move: Active -> Past
+    if (row) {
+      setActiveRows((prev) => prev.filter((r) => r._id !== promotionId));
+      setPastRows((prev) => [
+        normalizePastRow({
+          id: promotionId,
+          horse_id: row.horse_id,
+          horse_name: row.horse_name || "Horse",
+          enabled: false,
+          quota: row.quota,
+          min_shares_required: row.min_shares_required,
+          label: row.label,
+          reward: row.reward,
+          start_at: row.start_at || null,
+          end_at: row.end_at || null,
+          created_at: row.created_at || null,
+          disabled_at: new Date().toISOString(),
+        }),
+        ...prev,
+      ]);
+    }
+
+    await Promise.all([loadActive(), loadPast()]);
+  }
+
+  async function deletePromotion(promotionId) {
+    if (!window.confirm("PERMANENTLY delete this promotion? This cannot be undone.\n\nTip: If you only want to stop it, click Disable instead.")) return;
+    const { error } = await supabase.from("promotions").delete().eq("id", promotionId);
+    if (error) {
+      alert(error.message || "Failed to delete promotion.");
+      return;
+    }
+    setActiveRows((prev) => prev.filter((r) => r._id !== promotionId));
+    setPastRows((prev) => prev.filter((p) => p._id !== promotionId));
+    await Promise.all([loadActive(), loadPast()]);
+  }
+
+  return (
+    <section className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-green-900">Promotions</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { loadActive(); loadPast(); }}
+            className="text-sm border rounded px-3 py-1 hover:bg-gray-50"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {msg && <p className="mt-2 text-sm text-red-700">{msg}</p>}
+
+      {/* ACTIVE */}
+      <div className="mt-5">
+        <h3 className="text-base font-semibold text-green-900">Active promotions</h3>
+
+        {loadingA ? (
+          <p className="mt-3 text-gray-600">Loading…</p>
+        ) : activeRows.length === 0 ? (
+          <p className="mt-3 text-gray-600">No active promotions.</p>
+        ) : (
+          <ul className="mt-4 divide-y">
+            {activeRows.map((r) => (
+              <li key={r._id} className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-medium">
+                    {r.horse_name ?? "Horse"}{" "}
+                    <span className="text-xs text-gray-500">
+                    · Min {r.min_shares_required} or more shares · Quota {r.quota}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {r.label || `First ${r.quota} people`} — {r.reward || "Bonus reward"}
+                  </div>
+                  <div className="text-xs text-gray-600 mt-0.5">
+                    {r.claimed} claimed · {r.left} left
+                  </div>
+                  {(r.start_at || r.end_at) && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {r.start_at ? `Starts: ${d(r.start_at)}` : ""}
+                      {r.start_at && r.end_at ? " · " : ""}
+                      {r.end_at ? `Ends: ${d(r.end_at)}` : ""}
+                    </div>
+                  )}
+                  <div className="text-xs text-gray-400 mt-0.5">ID: {r._id}</div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/horses/${r.horse_id}`}
+                    className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                  >
+                    View horse →
+                  </Link>
+                  <a
+                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(r._id)}`}
+                    className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
+                    title="Download qualifying emails (CSV)"
+                  >
+                    CSV
+                  </a>
+                  <button
+                    onClick={() => disablePromotion(r._id)}
+                    className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50"
+                    title="Disable (move to Past)"
+                  >
+                    Disable
+                  </button>
+                  <button
+                    onClick={() => deletePromotion(r._id)}
+                    className="px-3 py-1.5 rounded text-sm text-white bg-red-600 hover:bg-red-700"
+                    title="Delete permanently"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* PAST */}
+      <div className="mt-8">
+        <h3 className="text-base font-semibold text-green-900">Past promotions</h3>
+
+        {loadingP ? (
+          <p className="mt-3 text-gray-600">Loading…</p>
+        ) : pastRows.length === 0 ? (
+          <p className="mt-3 text-gray-600">None yet.</p>
+        ) : (
+          <ul className="mt-4 divide-y">
+            {pastRows.map((p) => (
+              <li key={p._id} className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-medium">
+                    {p.horse_name}{" "}
+                    <span className="text-xs text-gray-500">
+                  · Min {p.min_shares_required ?? "—"} or more shares · Quota {p.quota ?? "—"}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {p.label || (p.quota ? `First ${p.quota} people` : "People-based promo")} — {p.reward || "—"}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    Started: {d(p.start_at)} ·{" "}
+                    {p.end_at ? `Ended: ${d(p.end_at)}` : `Disabled: ${d(p.disabled_at || p.updated_at || p.created_at)}`}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">ID: {p._id}</div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/horses/${p.horse_id}`}
+                    className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                  >
+                    View horse →
+                  </Link>
+                  <a
+                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(p._id)}`}
+                    className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
+                    title="Download the qualifying emails for this finished promo"
+                  >
+                    CSV
+                  </a>
+                  <button
+                    onClick={() => deletePromotion(p._id)}
+                    className="px-3 py-1.5 rounded text-sm text-white bg-red-600 hover:bg-red-700"
+                    title="Delete permanently"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}

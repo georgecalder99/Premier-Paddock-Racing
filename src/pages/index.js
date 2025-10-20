@@ -309,23 +309,95 @@ function RegisterInterest() {
 }
 
 /* ===========================
-   FEATURED HORSES
+   FEATURED HORSES (dark-mode safe) + PROMO
 =========================== */
 function FeaturedHorses() {
   const [horses, setHorses] = useState([]);
   const [soldByHorse, setSoldByHorse] = useState({});
+  const [salesByHorse, setSalesByHorse] = useState({}); // horse_id -> sales_count
   const [loading, setLoading] = useState(true);
+
+  // --- promo helpers ---
+  function normalizePromo(horse, salesCountRaw) {
+    const enabled = !!horse?.promo_enabled;
+    const quota =
+      horse?.promo_quota === null || horse?.promo_quota === undefined || horse?.promo_quota === ""
+        ? 0
+        : Number(horse.promo_quota);
+    const startSales =
+      horse?.promo_start_sales === null ||
+      horse?.promo_start_sales === undefined ||
+      horse?.promo_start_sales === ""
+        ? 0
+        : Number(horse.promo_start_sales);
+    const salesCount = Number(salesCountRaw ?? 0);
+    if (!enabled || quota <= 0) return null;
+
+    const claimed = Math.max(0, Math.min(quota, salesCount - startSales));
+    const left = Math.max(0, Math.min(quota, quota - claimed));
+    return {
+      label: horse?.promo_label || (startSales > 0 ? `Next ${quota} sales` : `First ${quota} sales`),
+      reward: horse?.promo_reward || "Special bonus",
+      quota,
+      startSales,
+      claimed,
+      left,
+      active: left > 0,
+    };
+  }
+
+  function PromoChip({ promo }) {
+    if (!promo) return null;
+    const active = promo.active;
+    const base =
+      "absolute left-2 top-2 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium shadow ring-1";
+    const activeCls =
+      "bg-amber-100 text-amber-900 ring-amber-300 dark:bg-amber-200/90 dark:text-amber-900 dark:ring-amber-300/70";
+    const inactiveCls =
+      "bg-gray-100 text-gray-700 ring-gray-300 dark:bg-neutral-700 dark:text-gray-200 dark:ring-neutral-600";
+    return (
+      <div className={`${base} ${active ? activeCls : inactiveCls}`} role="note" aria-live="polite">
+        <span aria-hidden>🎁</span>
+        <span className="whitespace-nowrap">{promo.label}</span>
+        <span
+          className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${
+            active ? "bg-amber-200" : "bg-gray-200 dark:bg-neutral-600"
+          }`}
+        >
+          {active ? `${promo.left} left` : "All claimed"}
+        </span>
+      </div>
+    );
+  }
+
+  function PromoInline({ promo }) {
+    if (!promo) return null;
+    const active = promo.active;
+    const base = "rounded-md px-3 py-2 text-xs shadow ring-1";
+    const activeCls =
+      "bg-amber-50 text-amber-900 ring-amber-200 dark:bg-amber-100/20 dark:text-amber-200 dark:ring-amber-200/30";
+    const inactiveCls =
+      "bg-gray-50 text-gray-700 ring-gray-200 dark:bg-neutral-800 dark:text-gray-200 dark:ring-neutral-700";
+    return (
+      <div className={`${base} ${active ? activeCls : inactiveCls}`} role="note" aria-live="polite">
+        <strong>{promo.label}</strong> — {promo.reward}{" "}
+        <span className="opacity-80">
+          · {active ? `${promo.claimed} claimed • ${promo.left} left` : `All ${promo.quota} claimed`}
+        </span>
+      </div>
+    );
+  }
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       setLoading(true);
 
-      // 1) Try featured first
+      // 1) Try featured first (include promo fields)
       const { data: featured, error: featuredErr } = await supabase
         .from("horses")
         .select(
-          "id,name,trainer,specialty,share_price,photo_url,total_shares,featured_position,created_at"
+          "id,name,trainer,specialty,share_price,photo_url,total_shares,featured_position,created_at,promo_enabled,promo_quota,promo_label,promo_reward,promo_start_sales"
         )
         .in("featured_position", [1, 2, 3])
         .order("featured_position", { ascending: true });
@@ -337,7 +409,7 @@ function FeaturedHorses() {
         const { data: latest } = await supabase
           .from("horses")
           .select(
-            "id,name,trainer,specialty,share_price,photo_url,total_shares,created_at"
+            "id,name,trainer,specialty,share_price,photo_url,total_shares,created_at,promo_enabled,promo_quota,promo_label,promo_reward,promo_start_sales"
           )
           .order("created_at", { ascending: false })
           .limit(3);
@@ -351,12 +423,14 @@ function FeaturedHorses() {
       // Ownership aggregation
       const ids = data.map((h) => h.id);
       if (ids.length > 0) {
-        const { data: owns } = await supabase
-          .from("ownerships")
-          .select("horse_id, shares")
-          .in("horse_id", ids);
+        const [{ data: owns }, { data: sales, error: salesErr }] = await Promise.all([
+          supabase.from("ownerships").select("horse_id, shares").in("horse_id", ids),
+          supabase.from("horse_sales_count").select("horse_id, sales_count").in("horse_id", ids),
+        ]);
 
         if (!mounted) return;
+
+        // shares sold map
         if (owns) {
           const map = {};
           for (const o of owns) {
@@ -366,8 +440,18 @@ function FeaturedHorses() {
         } else {
           setSoldByHorse({});
         }
+
+        // sales count map (promo)
+        if (!salesErr && sales) {
+          const smap = {};
+          for (const row of sales) smap[row.horse_id] = Number(row.sales_count || 0);
+          setSalesByHorse(smap);
+        } else {
+          setSalesByHorse({});
+        }
       } else {
         setSoldByHorse({});
+        setSalesByHorse({});
       }
 
       setLoading(false);
@@ -380,20 +464,20 @@ function FeaturedHorses() {
   return (
     <section className="max-w-7xl mx-auto px-6 py-16">
       <div className="flex items-end justify-between">
-        <h2 className="text-2xl md:text-3xl font-bold text-green-900">
+        <h2 className="text-2xl md:text-3xl font-bold text-green-900 dark:text-green-400">
           Featured Horses
         </h2>
-        <Link href="/horses" className="text-green-800 hover:underline">
+        <Link href="/horses" className="text-green-800 hover:underline dark:text-green-300">
           See all horses →
         </Link>
       </div>
 
       {loading ? (
-        <p className="mt-6 text-gray-600">Loading horses…</p>
+        <p className="mt-6 text-gray-600 dark:text-gray-300">Loading horses…</p>
       ) : horses.length === 0 ? (
         <>
-          <p className="mt-6 text-gray-600">No horses to show yet.</p>
-          <p className="mt-4 text-xs text-gray-500">
+          <p className="mt-6 text-gray-600 dark:text-gray-300">No horses to show yet.</p>
+          <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
             We’ve got new horses coming very soon!
           </p>
         </>
@@ -406,41 +490,52 @@ function FeaturedHorses() {
             const rawPct = total > 0 ? (sold / total) * 100 : 0;
             const pct = sold > 0 && rawPct < 1 ? 1 : Math.round(rawPct);
 
+            const promo = normalizePromo(h, salesByHorse[h.id]);
+
             return (
               <article
                 key={h.id}
-                className="bg-white rounded-xl shadow hover:shadow-md transition p-4"
+                className="bg-white dark:bg-neutral-800 rounded-xl shadow hover:shadow-md transition p-4
+                           ring-1 ring-black/5 dark:ring-white/10"
               >
-                <img
-                  src={h.photo_url || "https://placehold.co/640x400?text=Horse"}
-                  alt={h.name}
-                  className="w-full h-44 object-cover rounded-lg"
-                />
-                <h3 className="mt-3 font-semibold text-lg">{h.name}</h3>
-                <p className="text-sm text-gray-500">
+                <div className="relative rounded-lg overflow-hidden ring-1 ring-black/5 dark:ring-white/10">
+                  <PromoChip promo={promo} />
+                  <img
+                    src={h.photo_url || "https://placehold.co/640x400?text=Horse"}
+                    alt={h.name}
+                    className="w-full h-44 object-cover"
+                  />
+                </div>
+
+                <h3 className="mt-3 font-semibold text-lg text-gray-900 dark:text-gray-100">
+                  {h.name}
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-300">
                   {h.specialty || "—"} • Trainer: {h.trainer || "—"}
                 </p>
 
+                {/* Promo inline banner (subtle) */}
+                {promo && <div className="mt-3"><PromoInline promo={promo} /></div>}
+
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="font-semibold">
-                    £{h.share_price ?? "—"}{" "}
-                    <span className="font-normal">/ share</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                    £{h.share_price ?? "—"} <span className="font-normal">/ share</span>
                   </span>
-                  <span className="text-sm text-gray-600">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">
                     {total.toLocaleString()} shares
                   </span>
                 </div>
 
                 {/* Progress */}
                 <div className="mt-3">
-                  <div className="h-2 w-full bg-gray-200 rounded">
+                  <div className="h-2 w-full bg-gray-200 dark:bg-neutral-700 rounded">
                     <div
-                      className="h-2 bg-green-600 rounded"
+                      className="h-2 bg-green-600 dark:bg-green-500 rounded"
                       style={{ width: `${pct}%` }}
                       aria-label={`Sold ${pct}%`}
                     />
                   </div>
-                  <div className="mt-1 text-xs text-gray-600 flex justify-between">
+                  <div className="mt-1 text-xs text-gray-600 dark:text-gray-300 flex justify-between">
                     <span>{sold.toLocaleString()} sold</span>
                     <span>
                       {remaining > 0
@@ -453,7 +548,8 @@ function FeaturedHorses() {
                 <div className="mt-4 flex items-center justify-end">
                   <Link
                     href={`/horses/${h.id}`}
-                    className="px-3 py-1 text-sm bg-green-900 text-white rounded"
+                    className="px-3 py-1 text-sm bg-green-900 text-white rounded
+                               hover:bg-green-800 dark:bg-green-700 dark:hover:bg-green-600"
                   >
                     Read more
                   </Link>
@@ -466,7 +562,6 @@ function FeaturedHorses() {
     </section>
   );
 }
-
 
 /* ===========================
    WHAT MAKES US DIFFERENT (no extra CTA)

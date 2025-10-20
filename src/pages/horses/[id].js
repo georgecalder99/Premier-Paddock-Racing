@@ -1,12 +1,56 @@
-// src/pages/horses/[id].js
-import { useEffect, useMemo, useState } from "react";
+/* eslint-disable @next/next/no-img-element */
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
 
-// helpers
 const fmtGBP = (n) => `£${Number(n || 0).toLocaleString()}`;
+const plural = (n, one, many) => (n === 1 ? one : many);
+
+// --- server-count fetcher
+async function fetchPromoStats(horseId) {
+  try {
+    const r = await fetch(`/api/promotions/stats?horse_id=${encodeURIComponent(horseId)}`);
+    if (!r.ok) return { promotion: null, claimed: 0, left: 0, active: false };
+    return await r.json();
+  } catch {
+    return { promotion: null, claimed: 0, left: 0, active: false };
+  }
+}
+
+// --- normalize any label to "... {N} or more shares"
+function normalizePromoLabel({ quota, min, startAt, raw }) {
+  // Fallback label if none provided
+  const base =
+    startAt
+      ? `Next ${quota} who buy ${min} or more shares`
+      : `First ${quota} who buy ${min} or more shares`;
+
+  if (!raw || typeof raw !== "string") return base;
+
+  let s = raw;
+
+  // Replace symbols like "≥2" with "2 or more"
+  s = s.replace(/≥\s*(\d+)/gi, (_m, n) => `${n} or more`);
+
+  // Replace "2+ shares" with "2 or more shares"
+  s = s.replace(/\b(\d+)\+\s*shares?\b/gi, (_m, n) => `${n} or more shares`);
+
+  // If it's "buy 2" WITHOUT already having "or more" after the 2, add "or more"
+  s = s.replace(/\bbuy\s+(\d+)(?!\s*or\s+more)\b/gi, (_m, n) => `buy ${n} or more`);
+
+  // If it's "buy 2 or more" WITHOUT "shares" after, append "shares"
+  s = s.replace(/\b(buy\s+\d+\s+or\s+more)(?!\s+shares)\b/gi, (_m, grp) => `${grp} shares`);
+
+  // If it's "buy 2 or more shares shares" (double), collapse
+  s = s.replace(/\bshares\s+shares\b/gi, "shares");
+
+  // If we accidentally got "... or more or more", collapse duplicates
+  s = s.replace(/\bor more(?:\s+shares)?\s+or more\b/gi, "or more");
+
+  return s;
+}
 
 export default function HorseDetailPage() {
   const router = useRouter();
@@ -20,143 +64,108 @@ export default function HorseDetailPage() {
   const [soldTotal, setSoldTotal] = useState(0);
   const [qty, setQty] = useState(1);
 
-  // --- About blocks renderer helpers ---
-function toEmbedUrl(url = "") {
-  // YouTube
-  const yt1 = url.match(/youtube\.com\/watch\?v=([A-Za-z0-9_-]+)/i);
-  const yt2 = url.match(/youtu\.be\/([A-Za-z0-9_-]+)/i);
-  if (yt1 || yt2) {
-    const id = (yt1?.[1] || yt2?.[1]) ?? "";
-    return `https://www.youtube.com/embed/${id}`;
-  }
-  // Vimeo
-  const vimeo = url.match(/vimeo\.com\/(\d+)/i);
-  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`;
-  // Otherwise return original (mp4/webm/etc.)
-  return url;
-}
-
-function AboutBlocks({ blocks = [], horseName = "" }) {
-  if (!Array.isArray(blocks) || blocks.length === 0) return null;
-
-  return (
-    <section className="bg-white rounded-xl border p-6 shadow-sm">
-      <h2 className="text-2xl font-bold text-green-900">About {horseName}</h2>
-      <div className="mt-4 space-y-6">
-        {blocks.map((b, i) => {
-          if (b.type === "text") {
-            return (
-              <p key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">
-                {b.body || ""}
-              </p>
-            );
-          }
-          if (b.type === "image") {
-            return (
-              <figure key={i}>
-                <img
-                  src={b.url || ""}
-                  alt={b.caption || horseName || "Horse image"}
-                  className="w-full rounded-xl border object-cover"
-                />
-                {b.caption ? (
-                  <figcaption className="text-sm text-gray-600 mt-2">{b.caption}</figcaption>
-                ) : null}
-              </figure>
-            );
-          }
-          if (b.type === "video") {
-            const embed = toEmbedUrl(b.url || "");
-            const isDirectFile = /\.(mp4|webm|ogg)(\?|#|$)/i.test(embed);
-            return (
-              <figure key={i}>
-                {isDirectFile ? (
-                  <video className="w-full rounded-xl border" controls playsInline src={embed} />
-                ) : (
-                  <div className="aspect-video">
-                    <iframe
-                      className="w-full h-full rounded-xl border"
-                      src={embed}
-                      title={b.caption || `Video ${i + 1}`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  </div>
-                )}
-                {b.caption ? (
-                  <figcaption className="text-sm text-gray-600 mt-2">{b.caption}</figcaption>
-                ) : null}
-              </figure>
-            );
-          }
-          return null;
-        })}
-      </div>
-    </section>
-  );
-}
+  // promo row & live counters (from server)
+  const [promoRow, setPromoRow] = useState(null);
+  const [promoStats, setPromoStats] = useState(null); // {claimed,left,active}
 
   // auth
   useEffect(() => {
-    let sub;
     (async () => {
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
-      const { data: s } = supabase.auth.onAuthStateChange((_e, sess) => setSession(sess));
-      sub = s;
     })();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // core horse + sold/ownership
-  useEffect(() => {
+  // load horse + totals + server promo
+  const refreshAll = useCallback(async () => {
     if (!horseId) return;
-    (async () => {
-      setLoading(true);
-      const { data: h, error: hErr } = await supabase
-        .from("horses")
-        .select("*")
-        .eq("id", horseId)
-        .maybeSingle();
+    setLoading(true);
 
-      if (hErr) console.error("[HorseDetail] horse load error:", hErr);
+    // Horse
+    const { data: h, error: hErr } = await supabase
+      .from("horses")
+      .select("*")
+      .eq("id", horseId)
+      .maybeSingle();
+    if (hErr || !h) {
+      console.error("[HorseDetail] horse load error:", hErr);
+      setHorse(null);
+      setLoading(false);
+      return;
+    }
+    setHorse(h);
 
-      if (hErr || !h) {
-        console.error("[HorseDetail] horse load error:", hErr);
-        setHorse(null);
-        setLoading(false);
-        return;
-      }
+    // Totals sold
+    const { data: ownsAll } = await supabase
+      .from("ownerships")
+      .select("shares")
+      .eq("horse_id", horseId);
+    const totalSold = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
+    setSoldTotal(totalSold);
 
-      setHorse(h);
-
-      // sold across all users
-      const { data: ownsAll } = await supabase
+    // Your holdings
+    if (session?.user?.id) {
+      const { data: ownMine } = await supabase
         .from("ownerships")
         .select("shares")
-        .eq("horse_id", horseId);
+        .eq("horse_id", horseId)
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+      setYourShares(ownMine?.shares || 0);
+    } else {
+      setYourShares(0);
+    }
 
-      const totalSold = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
-      setSoldTotal(totalSold);
+    // Promo via server API
+    const stats = await fetchPromoStats(horseId);
+    setPromoRow(stats.promotion);
+    setPromoStats(stats);
 
-      // your shares
-      if (session?.user?.id) {
-        const { data: ownMine } = await supabase
-          .from("ownerships")
-          .select("shares")
-          .eq("horse_id", horseId)
-          .eq("user_id", session.user.id)
-          .maybeSingle();
-        setYourShares(ownMine?.shares || 0);
-      } else {
-        setYourShares(0);
-      }
-
-      setLoading(false);
-    })();
+    setLoading(false);
   }, [horseId, session?.user?.id]);
 
-  // derived availability
+  useEffect(() => { refreshAll(); }, [refreshAll]);
+
+  // realtime: when purchases/promotions change, re-fetch server stats + refresh sold
+  useEffect(() => {
+    if (!horseId) return;
+    const channel = supabase.channel(`horse-${horseId}-live`);
+
+    channel.on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "purchases", filter: `horse_id=eq.${horseId}` },
+      async () => {
+        const stats = await fetchPromoStats(horseId);
+        setPromoRow(stats.promotion);
+        setPromoStats(stats);
+
+        // refresh sold progress
+        const { data: ownsAll } = await supabase
+          .from("ownerships")
+          .select("shares")
+          .eq("horse_id", horseId);
+        const totalSold = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
+        setSoldTotal(totalSold);
+      }
+    );
+
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "promotions", filter: `horse_id=eq.${horseId}` },
+      async () => {
+        const stats = await fetchPromoStats(horseId);
+        setPromoRow(stats.promotion);
+        setPromoStats(stats);
+      }
+    );
+
+    channel.subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [horseId]);
+
+  // derived progress
   const derived = useMemo(() => {
     if (!horse) return { total: 0, sold: 0, remaining: 0, pct: 0 };
     const total = horse.total_shares ?? 0;
@@ -167,15 +176,7 @@ function AboutBlocks({ blocks = [], horseName = "" }) {
     return { total, sold, remaining, pct };
   }, [horse, soldTotal]);
 
-  // gallery photos
-  const photos = useMemo(() => {
-    const arr = Array.isArray(horse?.photos) ? horse.photos : [];
-    const list = [...arr];
-    if (!list.length && horse?.photo_url) list.push(horse.photo_url);
-    return list.slice(0, 4);
-  }, [horse?.photos, horse?.photo_url]);
-
-  // quick buy
+  // buy
   async function buyShares() {
     if (!session) {
       alert("Please log in first to buy shares.");
@@ -189,27 +190,16 @@ function AboutBlocks({ blocks = [], horseName = "" }) {
       .select("id,total_shares, name, share_price")
       .eq("id", horseId)
       .single();
-    if (liveErr || !liveHorse) {
-      alert("Could not verify availability. Try again.");
-      return;
-    }
+    if (liveErr || !liveHorse) { alert("Could not verify availability. Try again."); return; }
 
     const { data: ownsOne } = await supabase
       .from("ownerships")
       .select("horse_id, shares")
       .eq("horse_id", horseId);
-
     const soldLive = (ownsOne || []).reduce((s, o) => s + (o.shares || 0), 0);
     const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
-
-    if (remainingLive <= 0) {
-      alert("Sorry, this horse is sold out.");
-      return;
-    }
-    if (n > remainingLive) {
-      alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`);
-      return;
-    }
+    if (remainingLive <= 0) { alert("Sorry, this horse is sold out."); return; }
+    if (n > remainingLive) { alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`); return; }
 
     const userId = session.user.id;
     const { data: existing, error: checkError } = await supabase
@@ -218,7 +208,6 @@ function AboutBlocks({ blocks = [], horseName = "" }) {
       .eq("user_id", userId)
       .eq("horse_id", horseId)
       .maybeSingle();
-
     if (checkError && checkError.code !== "PGRST116") {
       console.error("Ownership check error:", checkError);
       alert("Something went wrong. Try again.");
@@ -230,65 +219,45 @@ function AboutBlocks({ blocks = [], horseName = "" }) {
         .from("ownerships")
         .update({ shares: (existing.shares || 0) + n })
         .eq("id", existing.id);
-      if (error) {
-        alert("Could not update your shares.");
-        return;
-      }
+      if (error) { alert("Could not update your shares."); return; }
     } else {
-      const { error } = await supabase.from("ownerships").insert({
-        user_id: userId,
-        horse_id: horseId,
-        shares: n,
-      });
-      if (error) {
-        alert("Could not add your shares.");
-        return;
-      }
+      const { error } = await supabase.from("ownerships").insert({ user_id: userId, horse_id: horseId, shares: n });
+      if (error) { alert("Could not add your shares."); return; }
     }
 
-    // --- send purchase confirmation email (non-blocking) ---
+    // purchases row (for promo tracking)
+    try {
+      const { error: purchaseErr } = await supabase
+        .from("purchases")
+        .insert({ user_id: userId, horse_id: horseId, qty: n, metadata: { source: "detail_buy" } });
+      if (purchaseErr) console.error("[purchase log] insert failed:", purchaseErr);
+    } catch (e) {
+      console.error("[purchase log] unexpected:", e);
+    }
+
+    // optional email
     try {
       const to = session.user?.email || "";
       if (to) {
         const pricePerShare = Number(liveHorse?.share_price ?? 0);
         const total = pricePerShare * n;
-
-     const buyerName =
-  session.user?.user_metadata?.full_name ||
-  session.user?.user_metadata?.name ||
-  (to.includes("@") ? to.split("@")[0] : "Owner");
-
-const resp = await fetch("/api/send-purchase-email", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    to,
-    buyerName,
-    horseName: liveHorse?.name || "Horse",
-    qty: n,
-    pricePerShare,
-    total,
-  }),
-});
-
-
-        const txt = await resp.text();
-        try {
-          console.log("[purchase email] status", resp.status, JSON.parse(txt));
-        } catch {
-          console.log("[purchase email] status", resp.status, txt);
-        }
-      } else {
-        console.warn("[purchase email] No user email on session; skipping.");
+        await fetch("/api/send-purchase-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to,
+            horseName: liveHorse?.name || "Horse",
+            qty: n,
+            pricePerShare,
+            total,
+          }),
+        });
       }
     } catch (e) {
-      console.error("[purchase email] fetch failed:", e);
+      console.error("[purchase email] failed:", e);
     }
 
-    // redirect to confirmation
-    window.location.href = `/purchase/success?horse=${encodeURIComponent(
-      horseId
-    )}&qty=${encodeURIComponent(n)}`;
+    window.location.href = `/purchase/success?horse=${encodeURIComponent(horseId)}&qty=${encodeURIComponent(n)}`;
   }
 
   if (loading) {
@@ -310,29 +279,24 @@ const resp = await fetch("/api/send-purchase-email", {
     );
   }
 
-  const OWNERSHIP_BENEFITS = [
-    "Regular trainer & stable updates",
-    "Entry/dec declarations and race-day info",
-    "Owners’ badge ballots & stable visit ballots",
-    "Share of prize money (pro-rata after costs)",
-    "Member events and behind-the-scenes content",
-    "Owner portal with results, updates and payments",
-  ];
-
-  const cost = {
-    horse_value: Number(horse.horse_value || 0),
-    training_vet: Number(horse.training_vet || 0),
-    insurance_race: Number(horse.insurance_race || 0),
-    management_fee: Number(horse.management_fee || 0),
-    contingency: Number(horse.contingency || 0),
-  };
-  const breakdownTotal =
-    horse.breakdown_total ??
-    cost.horse_value +
-      cost.training_vet +
-      cost.insurance_race +
-      cost.management_fee +
-      cost.contingency;
+  // Build promo with normalized label
+  const promo =
+    promoRow && promoStats
+      ? {
+          label: normalizePromoLabel({
+            quota: promoRow.quota,
+            min: promoRow.min_shares_required,
+            startAt: promoRow.start_at,
+            raw: promoRow.label,
+          }),
+          reward: promoRow.reward || "Bonus reward",
+          quota: promoRow.quota,
+          minShares: promoRow.min_shares_required,
+          claimed: promoStats.claimed,
+          left: promoStats.left,
+          active: promoStats.active,
+        }
+      : null;
 
   return (
     <>
@@ -342,53 +306,40 @@ const resp = await fetch("/api/send-purchase-email", {
       </Head>
 
       <main className="max-w-7xl mx-auto px-6 py-10">
-        {/* Title */}
         <div className="flex items-end justify-between mb-6">
           <h1 className="text-3xl md:text-4xl font-extrabold text-green-900">Meet {horse.name}</h1>
           <Link href="/horses" className="text-green-800 hover:underline">← Back to all horses</Link>
         </div>
 
-        {/* Grid: content + sticky purchase */}
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* LEFT: content */}
+          {/* LEFT */}
           <div className="lg:col-span-2 space-y-10">
             {/* Gallery */}
-           <section>
-  {photos.length > 0 ? (
-    <div className="grid sm:grid-cols-2 gap-3">
-      {photos.map((src, i) => (
-        <img
-          key={i}
-          src={src}
-          alt={`${horse.name} photo ${i + 1}`}
-          className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border"
-          onError={(e) => { e.currentTarget.src = "https://placehold.co/1200x800?text=Horse"; }}
-        />
-      ))}
-    </div>
-  ) : (
-    <img
-      src={horse.photo_url || "https://placehold.co/1200x800?text=Horse"}
-      alt={horse.name}
-      className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border"
-      onError={(e) => { e.currentTarget.src = "https://placehold.co/1200x800?text=Horse"; }}
-    />
-  )}
-</section>
+            <section>
+              {Array.isArray(horse?.photos) && horse.photos.length ? (
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {horse.photos.slice(0, 4).map((src, i) => (
+                    <img key={i} src={src} alt={`${horse.name} photo ${i + 1}`} className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border" />
+                  ))}
+                </div>
+              ) : (
+                <img
+                  src={horse.photo_url || "https://placehold.co/1200x800?text=Horse"}
+                  alt={horse.name}
+                  className="w-full h-56 sm:h-72 md:h-96 object-cover rounded-xl border"
+                />
+              )}
+            </section>
 
-         {/* About: show custom blocks if present, otherwise fallback to simple description */}
-{Array.isArray(horse.about_blocks) && horse.about_blocks.length > 0 ? (
-  <AboutBlocks blocks={horse.about_blocks} horseName={horse.name} />
-) : (
-  <section className="bg-white rounded-xl border p-6 shadow-sm">
-    <h2 className="text-2xl font-bold text-green-900">About {horse.name}</h2>
-    <p className="text-gray-800 leading-relaxed mt-3 whitespace-pre-wrap">
-      {horse.description || "No description yet."}
-    </p>
-  </section>
-)}
+            {/* About */}
+            <section className="bg-white rounded-xl border p-6 shadow-sm">
+              <h2 className="text-2xl font-bold text-green-900">About {horse.name}</h2>
+              <p className="text-gray-800 leading-relaxed mt-3 whitespace-pre-wrap">
+                {horse.description || "No description yet."}
+              </p>
+            </section>
 
-            {/* Trainer (no 'stayer' word) */}
+            {/* Trainer */}
             <section className="bg-white rounded-xl border p-6 shadow-sm">
               <h2 className="text-2xl font-bold text-green-900">About the Trainer</h2>
               <div className="mt-4 flex gap-4 items-start">
@@ -409,55 +360,6 @@ const resp = await fetch("/api/send-purchase-email", {
                 </div>
               </div>
             </section>
-
-            {/* Share breakdown (LIST with total at bottom) */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">Share Breakdown & Costs</h2>
-              <p className="text-sm text-gray-600 mt-1">Transparent, one-off upfront costs.</p>
-              <ul className="mt-4 space-y-2">
-                <BreakdownRow label="Horse value" value={cost.horse_value} />
-                <BreakdownRow label="Training & vet bills" value={cost.training_vet} />
-                <BreakdownRow label="Insurance & race fees" value={cost.insurance_race} />
-                <BreakdownRow label="Management fee" value={cost.management_fee} />
-                <BreakdownRow label="Contingency" value={cost.contingency} />
-                <BreakdownRow label="Total" value={breakdownTotal} bold />
-              </ul>
-            </section>
-
-            {/* Breeding */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">Breeding</h2>
-              <div className="mt-3 grid sm:grid-cols-2 gap-3 text-gray-800">
-                <Detail label="Sire" value={horse.sire} />
-                <Detail label="Dam" value={horse.dam} />
-                <Detail label="Damsire" value={horse.damsire} />
-                <Detail label="Foaled" value={horse.foaled} />
-                <Detail label="Sex" value={horse.sex} />
-                <Detail label="Colour" value={horse.color} />
-                <Detail label="Breeder" value={horse.breeder} />
-              </div>
-            </section>
-
-            {/* Recent form */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">Recent Form</h2>
-              <p className="text-gray-800 mt-3 whitespace-pre-wrap">
-                {horse.form_text || "No form entered yet."}
-              </p>
-            </section>
-
-            {/* Ownership benefits (boxed rows) */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">Ownership Benefits</h2>
-              <ul className="mt-4 space-y-2">
-                {OWNERSHIP_BENEFITS.map((b, i) => (
-                  <li key={i} className="flex items-center justify-between rounded-lg border p-3">
-                    <span className="text-sm text-gray-800">{b}</span>
-                    <span className="text-sm text-green-700">✓</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
           </div>
 
           {/* RIGHT: sticky purchase */}
@@ -465,12 +367,21 @@ const resp = await fetch("/api/send-purchase-email", {
             <div className="lg:sticky lg:top-24">
               <PurchaseCard
                 horse={horse}
-                derived={derived}
+                derived={{
+                  total: horse.total_shares ?? 0,
+                  sold: soldTotal ?? 0,
+                  remaining: Math.max(0, (horse.total_shares ?? 0) - (soldTotal ?? 0)),
+                  pct:
+                    (horse.total_shares ?? 0) > 0
+                      ? Math.max(1, Math.round(((soldTotal ?? 0) / (horse.total_shares ?? 0)) * 100))
+                      : 0,
+                }}
                 session={session}
                 yourShares={yourShares}
                 qty={qty}
                 setQty={setQty}
                 buyShares={buyShares}
+                promo={promo}
               />
             </div>
           </aside>
@@ -484,10 +395,25 @@ const resp = await fetch("/api/send-purchase-email", {
   );
 }
 
-function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buyShares }) {
+function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buyShares, promo }) {
   const soldOut = derived.remaining <= 0;
   return (
     <div className="rounded-xl border bg-white p-5 shadow-sm">
+      {/* Promo panel */}
+      {promo && (
+        <div className={`mb-4 rounded-lg px-4 py-3 text-sm ring-1
+                         ${promo.active ? "bg-amber-50 text-amber-900 ring-amber-200"
+                                         : "bg-gray-50 text-gray-700 ring-gray-200"}`}>
+          <div className="font-semibold">{promo.label}</div>
+          <div className="mt-1">{promo.reward}</div>
+          <div className="mt-1 text-xs">
+            {promo.active
+              ? `${promo.claimed} claimed · ${promo.left} ${plural(promo.left,"left","left")}`
+              : `All ${promo.quota} claimed`}
+          </div>
+        </div>
+      )}
+
       <div className="text-sm text-gray-600">Share price</div>
       <div className="text-2xl font-extrabold text-green-900">
         {horse.share_price ? fmtGBP(horse.share_price) : "—"}{" "}
@@ -517,26 +443,19 @@ function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buySha
           Qty:&nbsp;
           <select
             value={qty}
-            onChange={(e) =>
-              setQty(Math.min(100, Math.max(1, parseInt(e.target.value || "1", 10))))
-            }
+            onChange={(e) => setQty(Math.min(100, Math.max(1, parseInt(e.target.value || "1", 10))))}
             className="border rounded px-2 py-1 text-sm"
             disabled={soldOut}
             aria-label={`Select quantity for ${horse.name}`}
           >
             {Array.from({ length: 100 }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
+              <option key={n} value={n}>{n}</option>
             ))}
           </select>
         </label>
 
         {!session ? (
-          <button
-            onClick={() => (window.location.href = "/my-paddock")}
-            className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800"
-          >
+          <button onClick={() => (window.location.href = "/my-paddock")} className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800">
             Sign in to purchase
           </button>
         ) : (
@@ -544,32 +463,12 @@ function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buySha
             onClick={buyShares}
             className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
             disabled={soldOut}
-            title={soldOut ? "Sold out" : "Quick Buy"}
+            title={soldOut ? "Sold out" : "Buy shares"}
           >
             {soldOut ? "Sold out" : "Buy shares"}
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-function BreakdownRow({ label, value, bold }) {
-  return (
-    <li className="flex items-center justify-between rounded-lg border p-3">
-      <span className="text-sm text-gray-700">{label}</span>
-      <span className={`text-sm ${bold ? "font-extrabold text-green-900" : "font-semibold text-gray-900"}`}>
-        {fmtGBP(value)}
-      </span>
-    </li>
-  );
-}
-
-function Detail({ label, value }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <span className="text-sm text-gray-700">{label}</span>
-      <span className="text-sm font-semibold text-gray-900">{value || "—"}</span>
     </div>
   );
 }
