@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
+import { getOrCreateCart, addShareToCart } from "../../lib/cartClient";
 
 /** ClientOnly wrapper to prevent hydration flicker without touching hook order */
 function ClientOnly({ children }) {
@@ -15,7 +16,8 @@ function ClientOnly({ children }) {
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 function plural(n, one, many) { return n === 1 ? one : many; }
 
-function pickActivePromo(nowISO, rows) {
+/** Keep only enabled & time-valid promos */
+function pickActivePromos(nowISO, rows) {
   return (rows || []).filter((p) => {
     if (!p.enabled) return false;
     const startsOk = !p.start_at || p.start_at <= nowISO;
@@ -25,6 +27,7 @@ function pickActivePromo(nowISO, rows) {
   });
 }
 
+/** Compute {claimed,left,active} for a given promo */
 async function computePromoClaims(horseId, promo) {
   let q = supabase
     .from("purchases")
@@ -53,6 +56,23 @@ async function computePromoClaims(horseId, promo) {
   const claimed = ordered.length;
   const left = clamp((promo.quota || 0) - claimed, 0, promo.quota || 0);
   return { claimed, left, active: left > 0 };
+}
+
+/** Ensure labels say “… N or more shares” (no dupes) */
+function normalizePromoLabel({ quota, min, startAt, raw }) {
+  const base = startAt
+    ? `Next ${quota} who buy ${min} or more shares`
+    : `First ${quota} who buy ${min} or more shares`;
+
+  if (!raw || typeof raw !== "string") return base;
+
+  let s = raw;
+  s = s.replace(/≥\s*(\d+)/gi, (_m, n) => `${n} or more`);
+  s = s.replace(/\b(\d+)\+\s*shares?\b/gi, (_m, n) => `${n} or more shares`);
+  s = s.replace(/\bbuy\s+(\d+)(?!\s*or\s+more)\b/gi, (_m, n) => `buy ${n} or more`);
+  s = s.replace(/\b(buy\s+\d+\s+or\s+more)(?!\s+shares)\b/gi, (_m, grp) => `${grp} shares`);
+  s = s.replace(/\bshares\s+shares\b/gi, "shares").replace(/\bor more\s+or more\b/gi, "or more");
+  return s;
 }
 
 export default function HorsesPage() {
@@ -118,7 +138,7 @@ export default function HorsesPage() {
         setPromosByHorse({});
         setClaimsByHorse({});
       } else {
-        const active = pickActivePromo(nowISO, promos);
+        const active = pickActivePromos(nowISO, promos);
         const byHorse = {};
         active.forEach((p) => { byHorse[p.horse_id] = p; });
         setPromosByHorse(byHorse);
@@ -211,7 +231,7 @@ export default function HorsesPage() {
           .eq("horse_id", horseId)
           .eq("enabled", true);
 
-        const active = pickActivePromo(nowISO, promos);
+        const active = pickActivePromos(nowISO, promos);
         const activeOne = active[0] || null;
 
         setPromosByHorse((prev) => ({ ...prev, [horseId]: activeOne || undefined }));
@@ -234,99 +254,26 @@ export default function HorsesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [horses, promosByHorse]);
 
-  // ---------- quick buy (NOW SENDS EMAIL) ----------
-  async function buyShares(horse, qtyInput) {
-    if (!session) {
-      alert("Please log in first to buy shares.");
+  // ---------- Add to basket (only flow) ----------
+async function addToBasket(h, qtyInput) {
+  try {
+    // require login (RLS needs auth.uid())
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess?.session?.user?.id) {
+      alert("Please log in first to use your basket.");
       window.location.href = "/my-paddock";
       return;
     }
-    const horseId = horse.id;
+
     const n = Math.min(100, Math.max(1, Number(qtyInput || 1)));
-
-    // recheck availability
-    const { data: liveHorse, error: liveErr } = await supabase
-      .from("horses")
-      .select("id,total_shares, name, share_price")
-      .eq("id", horseId)
-      .single();
-    if (liveErr || !liveHorse) {
-      alert("Could not verify availability. Try again.");
-      return;
-    }
-
-    const { data: ownsOne } = await supabase
-      .from("ownerships")
-      .select("horse_id, shares")
-      .eq("horse_id", horseId);
-    const soldLive = (ownsOne || []).reduce((s, o) => s + (o.shares || 0), 0);
-    const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
-    if (remainingLive <= 0) { alert("Sorry, this horse is sold out."); return; }
-    if (n > remainingLive) { alert(`Only ${remainingLive} ${plural(remainingLive,"share","shares")} remaining for ${liveHorse?.name || "this horse"}.`); return; }
-
-    // upsert ownership
-    const userId = session.user.id;
-    const { data: existing, error: checkError } = await supabase
-      .from("ownerships")
-      .select("id, shares")
-      .eq("user_id", userId)
-      .eq("horse_id", horseId)
-      .maybeSingle();
-    if (checkError && checkError.code !== "PGRST116") {
-      console.error("Ownership check error:", checkError);
-      alert("Something went wrong. Try again.");
-      return;
-    }
-
-    if (existing) {
-      const { error } = await supabase
-        .from("ownerships")
-        .update({ shares: (existing.shares || 0) + n })
-        .eq("id", existing.id);
-      if (error) { alert("Could not update your shares."); return; }
-    } else {
-      const { error } = await supabase.from("ownerships").insert({ user_id: userId, horse_id: horseId, shares: n });
-      if (error) { alert("Could not add your shares."); return; }
-    }
-
-    // log purchase (for promo)
-    try {
-      const { error: purchaseErr } = await supabase
-        .from("purchases")
-        .insert({ user_id: userId, horse_id: horseId, qty: n, metadata: { source: "index_quick_buy" } });
-      if (purchaseErr) console.error("[purchase log] insert failed:", purchaseErr);
-    } catch (e) {
-      console.error("[purchase log] unexpected:", e);
-    }
-
-    // ✅ send confirmation email (same as ID page)
-    try {
-      const to = session.user?.email || "";
-      if (to) {
-        const pricePerShare = Number(liveHorse?.share_price ?? 0);
-        const total = pricePerShare * n;
-        const r = await fetch("/api/send-purchase-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to,
-            horseName: liveHorse?.name || "Horse",
-            qty: n,
-            pricePerShare,
-            total,
-          }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          console.error("[quick-buy email] backend error:", j?.error || r.statusText);
-        }
-      }
-    } catch (e) {
-      console.error("[quick-buy email] failed:", e);
-    }
-
-    window.location.href = `/purchase/success?horse=${encodeURIComponent(horseId)}&qty=${encodeURIComponent(n)}`;
+    const cart = await getOrCreateCart();
+    await addShareToCart(cart.id, h.id, n);
+    window.location.href = "/cart";
+  } catch (e) {
+    console.error("[addToBasket] failed:", e);
+    alert(e?.message || "Sorry, we couldn't add that to your basket. Please try again.");
   }
+}
 
   // computed progress + promo merge
   const horsesWithComputed = useMemo(() => {
@@ -342,11 +289,12 @@ export default function HorsesPage() {
 
       const promo = p && c
         ? {
-            label:
-              p.label ||
-              (p.start_at
-                ? `Next ${p.quota} who buy ${p.min_shares_required} or more shares`
-                : `First ${p.quota} who buy ${p.min_shares_required} or more shares`),
+            label: normalizePromoLabel({
+              quota: p.quota,
+              min: p.min_shares_required,
+              startAt: p.start_at,
+              raw: p.label,
+            }),
             reward: p.reward || "Bonus reward",
             quota: p.quota,
             minShares: p.min_shares_required,
@@ -456,7 +404,7 @@ export default function HorsesPage() {
                         </Link>
                       </div>
 
-                      {/* Quick buy */}
+                      {/* Actions: Qty + Add to basket */}
                       <div className="mt-4 border-t pt-4 flex items-end justify-between gap-3">
                         <label className="text-sm text-gray-700">
                           Qty:&nbsp;
@@ -473,20 +421,14 @@ export default function HorsesPage() {
                           </select>
                         </label>
 
-                        {!session ? (
-                          <button onClick={() => (window.location.href = "/my-paddock")} className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800">
-                            Sign in to purchase
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => buyShares(h, qty)}
-                            className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
-                            disabled={soldOut}
-                            title={soldOut ? "Sold out" : "Quick Buy"}
-                          >
-                            {soldOut ? "Sold out" : "Quick Buy"}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => addToBasket(h, qty)}
+                          className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
+                          disabled={soldOut}
+                          title={soldOut ? "Sold out" : "Add to basket"}
+                        >
+                          {soldOut ? "Sold out" : "Add to basket"}
+                        </button>
                       </div>
                     </article>
                   );
@@ -504,15 +446,18 @@ function HorsesHero() {
   return (
     <section className="relative overflow-hidden">
       <div className="absolute inset-0">
-        <img src="/hero.jpg" alt="" aria-hidden="true" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-green-900/60" />
         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-green-900/50 to-transparent" />
       </div>
+
       <div className="relative max-w-7xl mx-auto px-6 py-24 md:py-32 text-white text-center">
         <div className="max-w-3xl mx-auto">
-          <h1 className="text-4xl md:text-6xl font-extrabold leading-tight">Our Horses</h1>
+          <h1 className="text-4xl md:text-6xl font-extrabold leading-tight">
+            Our Horses
+          </h1>
           <p className="mt-5 text-lg md:text-xl text-gray-100">
-            Explore active syndicates, check share availability in real time, and join the journey from just £60 per share.
+            Explore active syndicates, check share availability in real time,
+            and join the journey for a low price.
           </p>
         </div>
       </div>

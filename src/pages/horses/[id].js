@@ -8,7 +8,7 @@ import { supabase } from "../../lib/supabaseClient";
 const fmtGBP = (n) => `£${Number(n || 0).toLocaleString()}`;
 const plural = (n, one, many) => (n === 1 ? one : many);
 
-// --- server-count fetcher
+// ---------- promo helpers ----------
 async function fetchPromoStats(horseId) {
   try {
     const r = await fetch(`/api/promotions/stats?horse_id=${encodeURIComponent(horseId)}`);
@@ -19,42 +19,303 @@ async function fetchPromoStats(horseId) {
   }
 }
 
-// --- normalize any label to "... {N} or more shares"
 function normalizePromoLabel({ quota, min, startAt, raw }) {
-  // Fallback label if none provided
-  const base =
-    startAt
-      ? `Next ${quota} who buy ${min} or more shares`
-      : `First ${quota} who buy ${min} or more shares`;
-
+  const base = startAt
+    ? `Next ${quota} who buy ${min} or more shares`
+    : `First ${quota} who buy ${min} or more shares`;
   if (!raw || typeof raw !== "string") return base;
 
   let s = raw;
-
-  // Replace symbols like "≥2" with "2 or more"
   s = s.replace(/≥\s*(\d+)/gi, (_m, n) => `${n} or more`);
-
-  // Replace "2+ shares" with "2 or more shares"
   s = s.replace(/\b(\d+)\+\s*shares?\b/gi, (_m, n) => `${n} or more shares`);
-
-  // If it's "buy 2" WITHOUT already having "or more" after the 2, add "or more"
   s = s.replace(/\bbuy\s+(\d+)(?!\s*or\s+more)\b/gi, (_m, n) => `buy ${n} or more`);
-
-  // If it's "buy 2 or more" WITHOUT "shares" after, append "shares"
   s = s.replace(/\b(buy\s+\d+\s+or\s+more)(?!\s+shares)\b/gi, (_m, grp) => `${grp} shares`);
-
-  // If it's "buy 2 or more shares shares" (double), collapse
   s = s.replace(/\bshares\s+shares\b/gi, "shares");
-
-  // If we accidentally got "... or more or more", collapse duplicates
   s = s.replace(/\bor more(?:\s+shares)?\s+or more\b/gi, "or more");
-
   return s;
 }
 
+// ---------- ABOUT BLOCKS: normalization + renderer ----------
+function parseJSONSafely(s) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    try {
+      const fixed = s
+        .replace(/([{,]\s*)([A-Za-z0-9_]+)(\s*:)/g, '$1"$2"$3') // quote bare keys
+        .replace(/'/g, '"');
+      return JSON.parse(fixed);
+    } catch {
+      return null;
+    }
+  }
+}
+
+// Try to coerce horse.about_blocks into an array of blocks regardless of shape
+function extractAboutBlocks(horse, debug) {
+  const candidates = [
+    horse?.about_blocks,
+    horse?.aboutBlocks,
+    horse?.about,
+    horse?.blocks,
+  ];
+
+  for (const v of candidates) {
+    if (v == null) continue;
+
+    if (Array.isArray(v)) {
+      if (debug) console.log("[about_blocks] using array directly:", v);
+      return v;
+    }
+
+    if (typeof v === "string") {
+      const trimmed = v.trim();
+      if (!trimmed) continue;
+      const parsed = parseJSONSafely(trimmed);
+      if (Array.isArray(parsed)) {
+        if (debug) console.log("[about_blocks] parsed JSON string into array:", parsed);
+        return parsed;
+      }
+      if (parsed && typeof parsed === "object") {
+        // Sometimes stored as { blocks: [...] } or { items: [...] }
+        const arr =
+          Array.isArray(parsed.blocks) ? parsed.blocks :
+          Array.isArray(parsed.items) ? parsed.items :
+          Array.isArray(parsed.value) ? parsed.value : null;
+        if (arr) {
+          if (debug) console.log("[about_blocks] parsed JSON object -> array via key:", arr);
+          return arr;
+        }
+      }
+      if (debug) console.log("[about_blocks] string present but not an array after parse:", v);
+      continue;
+    }
+
+    if (typeof v === "object") {
+      const arr =
+        Array.isArray(v.blocks) ? v.blocks :
+        Array.isArray(v.items) ? v.items :
+        Array.isArray(v.value) ? v.value :
+        Array.isArray(v.data) ? v.data : null;
+      if (arr) {
+        if (debug) console.log("[about_blocks] object with array in known key:", arr);
+        return arr;
+      }
+      // Sometimes the object is actually a single block; wrap it.
+      const possibleSingleBlockKeys = ["type", "blockType", "component", "text", "content", "paragraph", "body"];
+      if (possibleSingleBlockKeys.some((k) => v[k] != null)) {
+        if (debug) console.log("[about_blocks] single block object, wrapping as array:", v);
+        return [v];
+      }
+      if (debug) console.log("[about_blocks] object present but not recognized shape:", v);
+    }
+  }
+
+  return [];
+}
+
+function getBlockType(b) {
+  return String(b.type || b.blockType || b.component || "").toLowerCase();
+}
+
+function getBlockText(b) {
+  return (
+    b.text ??
+    b.content ??
+    b.body ??
+    b.paragraph ??
+    b.html ?? // if html provided, render as plain text fallback; safer
+    ""
+  );
+}
+
+function getImageUrl(b) {
+  return (b.src || b.url || b.image_url || b.imageUrl || b.image || "").trim();
+}
+
+function getVideoUrl(b) {
+  return (b.url || b.src || b.video_url || b.videoUrl || b.embedUrl || b.embed || "").trim();
+}
+
+function AboutBlocks({ blocks, horseName, debug }) {
+  const arr = Array.isArray(blocks) ? blocks : [];
+
+  if (arr.length === 0) {
+    if (debug) {
+      return (
+        <section className="bg-white rounded-xl border p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-green-900">About {horseName}</h2>
+          <div className="mt-3 text-sm text-gray-600">
+            <strong>Debug:</strong> No blocks to render (array is empty).
+          </div>
+        </section>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <section className="bg-white rounded-xl border p-6 shadow-sm">
+      <h2 className="text-2xl font-bold text-green-900">About {horseName}</h2>
+
+      <div className="mt-4 space-y-5">
+        {arr.map((raw, i) => {
+          if (!raw) return null;
+          const b = typeof raw === "string" ? { type: "paragraph", text: raw } : raw;
+          const type = getBlockType(b);
+
+          if (type === "heading" || type === "title") {
+            return (
+              <h3 key={i} className="text-xl font-semibold text-green-900">
+                {getBlockText(b)}
+              </h3>
+            );
+          }
+
+          if (type === "image" || type === "img" || b.image || b.image_url || b.imageUrl) {
+            const src = getImageUrl(b);
+            if (!src) return null;
+            return (
+              <figure key={i}>
+                <img src={src} alt={b.alt || "Image"} className="w-full rounded-lg border" />
+                {b.caption ? (
+                  <figcaption className="text-xs text-gray-500 mt-1">{b.caption}</figcaption>
+                ) : null}
+              </figure>
+            );
+          }
+
+          if (type === "video" || type === "embed" || b.video_url || b.videoUrl || b.embedUrl || b.embed) {
+            const url = getVideoUrl(b);
+            if (!url) return null;
+
+            const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+            const vimeo = url.match(/vimeo\.com\/(\d+)/);
+
+            if (yt) {
+              return (
+                <div key={i} className="aspect-video w-full">
+                  <iframe
+                    className="w-full h-full rounded-lg border"
+                    src={`https://www.youtube.com/embed/${yt[1]}`}
+                    title={b.title || "Video"}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              );
+            }
+            if (vimeo) {
+              return (
+                <div key={i} className="aspect-video w-full">
+                  <iframe
+                    className="w-full h-full rounded-lg border"
+                    src={`https://player.vimeo.com/video/${vimeo[1]}`}
+                    title={b.title || "Video"}
+                    allow="autoplay; fullscreen; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              );
+            }
+            return <video key={i} className="w-full rounded-lg border" controls src={url} />;
+          }
+
+          if (type === "quote" || b.cite) {
+            return (
+              <blockquote
+                key={i}
+                className="border-l-4 border-green-900/30 pl-3 italic text-gray-800"
+              >
+                {getBlockText(b)}
+                {b.cite ? (
+                  <div className="mt-1 text-xs not-italic text-gray-500">— {b.cite}</div>
+                ) : null}
+              </blockquote>
+            );
+          }
+
+          // default paragraph
+          return (
+            <p key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+              {getBlockText(b)}
+            </p>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ---------- Costs + Breeding (unchanged) ----------
+function CostsBreakdown({ h }) {
+  const rows = [
+    ["Horse value", h.horse_value],
+    ["Training & vet bills", h.training_vet],
+    ["Insurance & race fees", h.insurance_race],
+    ["Management fee", h.management_fee],
+    ["Contingency", h.contingency],
+  ];
+  const total = h.breakdown_total === "" || h.breakdown_total == null ? null : Number(h.breakdown_total);
+
+  return (
+    <section className="bg-white rounded-xl border p-6 shadow-sm">
+      <h2 className="text-2xl font-bold text-green-900">Share breakdown & costs</h2>
+      <div className="mt-4 divide-y">
+        {rows.map(([label, value]) => (
+          <div key={label} className="py-2">
+            <div className="flex justify-between gap-3 text-sm">
+              <span className="text-gray-600">{label}</span>
+              <span className="font-medium">{value === "" || value == null ? "—" : fmtGBP(value)}</span>
+            </div>
+          </div>
+        ))}
+        <div className="pt-3">
+          <div className="flex justify-between gap-3 text-sm">
+            <span className="text-gray-600">Total</span>
+            <span className="font-medium">{total == null ? "—" : fmtGBP(total)}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BreedingAndForm({ h }) {
+  return (
+    <section className="bg-white rounded-xl border p-6 shadow-sm">
+      <h2 className="text-2xl font-bold text-green-900">Breeding & Form</h2>
+
+      <div className="mt-4 grid sm:grid-cols-2 gap-3">
+        {[
+          ["Sire", h.sire],
+          ["Dam", h.dam],
+          ["Damsire", h.damsire],
+          ["Foaled", h.foaled],
+          ["Sex", h.sex],
+          ["Colour", h.color],
+          ["Breeder", h.breeder],
+        ].map(([label, val]) => (
+          <div key={label} className="flex justify-between gap-3 text-sm">
+            <span className="text-gray-600">{label}</span>
+            <span className="font-medium">{val || "—"}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4">
+        <h3 className="text-lg font-semibold text-green-900">Recent form</h3>
+        <p className="mt-2 text-gray-800 whitespace-pre-wrap">{h.form_text || "—"}</p>
+      </div>
+    </section>
+  );
+}
+
+// ---------- PAGE ----------
 export default function HorseDetailPage() {
   const router = useRouter();
   const { id: horseId } = router.query;
+  const debug = String(router.query.debug || "") === "1";
 
   const [loading, setLoading] = useState(true);
   const [horse, setHorse] = useState(null);
@@ -64,11 +325,9 @@ export default function HorseDetailPage() {
   const [soldTotal, setSoldTotal] = useState(0);
   const [qty, setQty] = useState(1);
 
-  // promo row & live counters (from server)
   const [promoRow, setPromoRow] = useState(null);
-  const [promoStats, setPromoStats] = useState(null); // {claimed,left,active}
+  const [promoStats, setPromoStats] = useState(null);
 
-  // auth
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getSession();
@@ -78,26 +337,48 @@ export default function HorseDetailPage() {
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // load horse + totals + server promo
   const refreshAll = useCallback(async () => {
     if (!horseId) return;
     setLoading(true);
 
-    // Horse
+    // Explicitly select about_blocks to avoid view/column quirks
     const { data: h, error: hErr } = await supabase
       .from("horses")
-      .select("*")
+      .select(`
+        id, name, trainer, specialty, share_price, total_shares,
+        photo_url, photos, photos_csv,
+        description, trainer_bio, trainer_photo_url,
+        horse_value, training_vet, insurance_race, management_fee, contingency, breakdown_total,
+        sire, dam, damsire, foaled, sex, color, breeder, form_text,
+        featured_position,
+        about_blocks
+      `)
       .eq("id", horseId)
       .maybeSingle();
+
     if (hErr || !h) {
       console.error("[HorseDetail] horse load error:", hErr);
       setHorse(null);
       setLoading(false);
       return;
     }
-    setHorse(h);
 
-    // Totals sold
+    if (debug) {
+      console.log("[HorseDetail] raw horse row:", h);
+    }
+
+    // photos
+    let photos = Array.isArray(h.photos) ? h.photos : [];
+    if ((!photos || photos.length === 0) && (h.photos_csv || "").trim()) {
+      photos = h.photos_csv.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    // normalize about_blocks
+    const blocks = extractAboutBlocks(h, debug);
+
+    setHorse({ ...h, photos, about_blocks: blocks });
+
+    // totals sold
     const { data: ownsAll } = await supabase
       .from("ownerships")
       .select("shares")
@@ -105,7 +386,7 @@ export default function HorseDetailPage() {
     const totalSold = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
     setSoldTotal(totalSold);
 
-    // Your holdings
+    // your holdings
     if (session?.user?.id) {
       const { data: ownMine } = await supabase
         .from("ownerships")
@@ -118,17 +399,16 @@ export default function HorseDetailPage() {
       setYourShares(0);
     }
 
-    // Promo via server API
+    // promo
     const stats = await fetchPromoStats(horseId);
     setPromoRow(stats.promotion);
     setPromoStats(stats);
 
     setLoading(false);
-  }, [horseId, session?.user?.id]);
+  }, [horseId, session?.user?.id, debug]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
-  // realtime: when purchases/promotions change, re-fetch server stats + refresh sold
   useEffect(() => {
     if (!horseId) return;
     const channel = supabase.channel(`horse-${horseId}-live`);
@@ -141,7 +421,6 @@ export default function HorseDetailPage() {
         setPromoRow(stats.promotion);
         setPromoStats(stats);
 
-        // refresh sold progress
         const { data: ownsAll } = await supabase
           .from("ownerships")
           .select("shares")
@@ -165,7 +444,6 @@ export default function HorseDetailPage() {
     return () => supabase.removeChannel(channel);
   }, [horseId]);
 
-  // derived progress
   const derived = useMemo(() => {
     if (!horse) return { total: 0, sold: 0, remaining: 0, pct: 0 };
     const total = horse.total_shares ?? 0;
@@ -176,7 +454,6 @@ export default function HorseDetailPage() {
     return { total, sold, remaining, pct };
   }, [horse, soldTotal]);
 
-  // buy
   async function buyShares() {
     if (!session) {
       alert("Please log in first to buy shares.");
@@ -225,7 +502,6 @@ export default function HorseDetailPage() {
       if (error) { alert("Could not add your shares."); return; }
     }
 
-    // purchases row (for promo tracking)
     try {
       const { error: purchaseErr } = await supabase
         .from("purchases")
@@ -235,7 +511,6 @@ export default function HorseDetailPage() {
       console.error("[purchase log] unexpected:", e);
     }
 
-    // optional email
     try {
       const to = session.user?.email || "";
       if (to) {
@@ -279,7 +554,6 @@ export default function HorseDetailPage() {
     );
   }
 
-  // Build promo with normalized label
   const promo =
     promoRow && promoStats
       ? {
@@ -311,6 +585,13 @@ export default function HorseDetailPage() {
           <Link href="/horses" className="text-green-800 hover:underline">← Back to all horses</Link>
         </div>
 
+        {/* Optional tiny debug box */}
+        {String(router.query.debug || "") === "1" && (
+          <div className="mb-4 rounded border bg-yellow-50 text-yellow-900 p-3 text-xs">
+            <div><strong>Debug:</strong> about_blocks length = {Array.isArray(horse.about_blocks) ? horse.about_blocks.length : 0}</div>
+          </div>
+        )}
+
         <div className="grid lg:grid-cols-3 gap-8">
           {/* LEFT */}
           <div className="lg:col-span-2 space-y-10">
@@ -331,13 +612,14 @@ export default function HorseDetailPage() {
               )}
             </section>
 
-            {/* About */}
-            <section className="bg-white rounded-xl border p-6 shadow-sm">
-              <h2 className="text-2xl font-bold text-green-900">About {horse.name}</h2>
-              <p className="text-gray-800 leading-relaxed mt-3 whitespace-pre-wrap">
-                {horse.description || "No description yet."}
-              </p>
-            </section>
+            {/* ABOUT BLOCKS (no legacy fallback) */}
+            <AboutBlocks blocks={horse.about_blocks} horseName={horse.name} debug={debug} />
+
+            {/* Costs */}
+            <CostsBreakdown h={horse} />
+
+            {/* Breeding & Form */}
+            <BreedingAndForm h={horse} />
 
             {/* Trainer */}
             <section className="bg-white rounded-xl border p-6 shadow-sm">
@@ -395,11 +677,11 @@ export default function HorseDetailPage() {
   );
 }
 
+// ---------- Purchase Card (unchanged) ----------
 function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buyShares, promo }) {
   const soldOut = derived.remaining <= 0;
   return (
     <div className="rounded-xl border bg-white p-5 shadow-sm">
-      {/* Promo panel */}
       {promo && (
         <div className={`mb-4 rounded-lg px-4 py-3 text-sm ring-1
                          ${promo.active ? "bg-amber-50 text-amber-900 ring-amber-200"
@@ -420,7 +702,6 @@ function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buySha
         <span className="text-base font-medium text-gray-700">/ share</span>
       </div>
 
-      {/* Progress */}
       <div className="mt-4">
         <div className="h-2 w-full bg-gray-200 rounded">
           <div className="h-2 bg-green-600 rounded" style={{ width: `${derived.pct}%` }} />

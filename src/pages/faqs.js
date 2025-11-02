@@ -228,7 +228,6 @@ const SECTIONS = [
 /* ===========================
    Components
 =========================== */
-
 function AnchorNav() {
   return (
     <nav aria-label="FAQ sections">
@@ -237,7 +236,7 @@ function AnchorNav() {
           <li key={s.id}>
             <a
               href={`#${s.id}`}
-              className="inline-block rounded-full border px-3 py-1.5 text-sm text-green-900 hover:bg-gray-100"
+              className="inline-block rounded-full border border-white/50 px-3 py-1.5 text-sm text-white hover:bg-white/20 backdrop-blur-sm transition"
             >
               {s.title}
             </a>
@@ -319,22 +318,29 @@ export default function FAQs() {
       </Head>
 
       <main className="bg-white">
-        {/* Header */}
-        <section className="bg-gray-50">
-          <div className="max-w-4xl mx-auto px-6 py-16 text-center">
-            <h1 className="text-3xl md:text-4xl font-extrabold text-green-900">
-              Frequently asked questions
-            </h1>
-            <p className="mt-3 text-gray-700 max-w-2xl mx-auto">
-              Clear answers about shares, ballots, trainer updates, racing plans,
-              prize money and more. For full details, please see our Terms & Conditions.
-            </p>
+{/* Hero / header */}
+<section className="relative overflow-hidden">
+  {/* overlays (same as your other pages) */}
+  <div className="absolute inset-0">
+    <div className="absolute inset-0 bg-green-900/60" />
+    <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-green-900/50 to-transparent" />
+  </div>
 
-            <div className="mt-6">
-              <AnchorNav />
-            </div>
-          </div>
-        </section>
+  {/* content */}
+  <div className="relative max-w-4xl mx-auto px-6 py-16 md:py-24 text-center text-white">
+    <h1 className="text-3xl md:text-4xl font-extrabold">
+      Frequently asked questions
+    </h1>
+    <p className="mt-3 text-gray-100/90 max-w-2xl mx-auto">
+      Clear answers about shares, ballots, trainer updates, racing plans,
+      prize money and more. For full details, please see our Terms &amp; Conditions.
+    </p>
+
+    <div className="mt-6">
+      <AnchorNav />
+    </div>
+  </div>
+</section>
 
         {/* Sections */}
         {SECTIONS.map((s) => (

@@ -94,18 +94,9 @@ export default function Home() {
 function Hero({ isAdmin, loggedIn }) {
   return (
     <section className="relative overflow-hidden">
-      {/* Background image */}
-      <div className="absolute inset-0">
-        <img
-          src="/hero.jpg"
-          alt=""
-          aria-hidden="true"
-          className="h-full w-full object-cover"
-        />
-        {/* dark-only tweaks to overlay intensity */}
-        <div className="absolute inset-0 bg-green-900/60 dark:bg-green-900/70" />
-        <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent dark:from-green-900/60" />
-      </div>
+      {/* overlays */}
+      <div className="absolute inset-0 bg-green-900/60 dark:bg-green-900/70" />
+      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent dark:from-green-900/60" />
 
       {/* Admin button */}
       {isAdmin && (
@@ -136,7 +127,6 @@ function Hero({ isAdmin, loggedIn }) {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            {/* Primary CTA — only change in dark */}
             <Link
               href="/horses"
               className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100 dark:bg-green-700 dark:text-white dark:hover:bg-green-600"
@@ -144,7 +134,6 @@ function Hero({ isAdmin, loggedIn }) {
               View Horses
             </Link>
 
-            {/* Secondary outline — only change in dark */}
             <Link
               href="/how-it-works"
               className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
@@ -152,7 +141,6 @@ function Hero({ isAdmin, loggedIn }) {
               How it works
             </Link>
 
-            {/* Sign up / My Paddock — only change in dark */}
             {!loggedIn ? (
               <Link
                 href="/my-paddock"

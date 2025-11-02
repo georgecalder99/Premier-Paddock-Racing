@@ -3,10 +3,12 @@
 import Head from "next/head";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
+import cartApi from "../../lib/cartClient";
+import { useRouter } from "next/router";
 
 // Confetti must be client-only to avoid SSR window errors (used elsewhere on page)
 const Confetti = dynamic(() => import("react-confetti"), { ssr: false });
@@ -85,7 +87,9 @@ function ProfileDetailsCard({ session, onSaved }) {
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             placeholder="e.g. George Calder"
-            className="mt-1 w-full border rounded px-3 py-2"
+            className="mt-1 w-full border rounded px-3 py-2
+           bg-white text-gray-900 placeholder-gray-400 border-gray-300
+           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
           />
         </label>
         <button
@@ -231,11 +235,24 @@ export default function MyPaddock() {
           </p>
           {err && <p className="text-red-600 mb-3">Error: {err}</p>}
           <Auth
-            supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa }}
-            providers={[]} // email only
-            redirectTo={redirectTo}
-          />
+  supabaseClient={supabase}
+  appearance={{
+    theme: ThemeSupa,
+    variables: {
+      default: {
+        colors: {
+          brand: '#14532d',
+          inputText: '#111827',
+          inputBackground: '#ffffff',
+          inputBorder: '#d1d5db',
+          messageText: '#111827',
+        },
+      },
+    },
+  }}
+  providers={[]}
+  redirectTo={redirectTo}
+/>
         </main>
       </>
     );
@@ -251,7 +268,7 @@ export default function MyPaddock() {
         />
       </Head>
 
-      <main className="max-w-7xl mx-auto px-6 py-10">
+<main className="max-w-7xl mx-auto px-6 py-10 dark:bg-neutral-950 dark:text-gray-100">
         {/* Header / Actions */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
@@ -314,7 +331,7 @@ export default function MyPaddock() {
         </section>
 
         {/* Sticky Sub-Nav */}
-        <section className="mt-8 sticky top-0 z-20 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-b">
+        <section className="mt-8 sticky top-0 z-20 bg-white/90 dark:bg-neutral-950/90 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:supports-[backdrop-filter]:bg-neutral-950/60 border-b border-gray-200 dark:border-white/10">
           <div className="max-w-7xl mx-auto flex gap-2 px-1 py-2 overflow-x-auto">
             <TabButton id="owned" activeTab={activeTab} setActiveTab={setActiveTab}>
               Owned Horses
@@ -355,12 +372,17 @@ export default function MyPaddock() {
           )}
           {activeTab === "updates" && <UpdatesTab ownedHorseIds={ownedHorseIds} />}
           {activeTab === "renew" && (
-            <RenewTab
-              userId={session.user.id}
-              owned={owned}
-              userEmailProp={session.user.email}
-            />
-          )}
+  <RenewTab
+    userId={session.user.id}
+    owned={owned}
+    userEmailProp={session.user.email}
+    displayNameProp={
+      session.user?.user_metadata?.full_name ||
+      session.user?.user_metadata?.name ||
+      (session.user?.email?.split("@")[0] || "Owner")
+    }
+  />
+)}
         </section>
       </main>
     </>
@@ -377,11 +399,10 @@ function TabButton({ id, activeTab, setActiveTab, children }) {
   return (
     <button
       onClick={() => setActiveTab(id)}
-      className={`px-4 py-2 rounded-lg border transition ${
-        isActive
+      className={`px-4 py-2 rounded-lg border transition
+        ${isActive
           ? "bg-green-900 text-white border-green-900"
-          : "bg-white text-green-900 border-gray-200 hover:bg-gray-50"
-      }`}
+          : "bg-white text-green-900 border-gray-200 hover:bg-gray-50 dark:bg-neutral-900 dark:text-green-300 dark:border-white/10 dark:hover:bg-neutral-800"}`}
       aria-pressed={isActive}
       aria-controls={`panel-${id}`}
     >
@@ -392,9 +413,9 @@ function TabButton({ id, activeTab, setActiveTab, children }) {
 
 function StatCard({ label, value }) {
   return (
-    <div className="rounded-xl border bg-white p-5 shadow-sm">
-      <div className="text-sm uppercase tracking-wide text-gray-500">{label}</div>
-      <div className="mt-1 text-2xl font-extrabold text-green-900">{value}</div>
+    <div className="rounded-xl border bg-white p-5 shadow-sm dark:bg-neutral-900 dark:border-white/10">
+      <div className="text-sm uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="mt-1 text-2xl font-extrabold text-green-900 dark:text-green-300">{value}</div>
     </div>
   );
 }
@@ -410,7 +431,7 @@ function OwnedTab({ loading, owned, goTab }) {
       {loading && <p className="text-gray-600">Loading your horses…</p>}
 
       {!loading && owned.length === 0 && (
-        <div className="rounded-xl border bg-white p-6 shadow-sm">
+       <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
           <p className="text-gray-700">
             You don’t own any horses yet.{" "}
             <Link href="/horses" className="text-green-700 underline">
@@ -423,7 +444,7 @@ function OwnedTab({ loading, owned, goTab }) {
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
         {owned.map((o) => (
-          <article key={o.horse.id} className="bg-white rounded-lg shadow p-4">
+         <article key={o.horse.id} className="bg-white rounded-lg shadow p-4 dark:bg-neutral-900 dark:border-white/10">
             <img
               src={o.horse.photo_url || "https://placehold.co/640x400?text=Horse"}
               alt={o.horse.name}
@@ -627,7 +648,7 @@ function OpenBallots({ userId, ownedHorseIds }) {
   if (loading) return <p>Loading ballots…</p>;
   if (openBallots.length === 0)
     return (
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No open ballots for your horses</h3>
         <p className="text-sm text-gray-600 mt-1">We’ll notify you when new ballots open.</p>
       </div>
@@ -643,7 +664,7 @@ function OpenBallots({ userId, ownedHorseIds }) {
         const horseName = b.horse_id ? (horseNames[b.horse_id] || "—") : "—";
 
         return (
-          <article key={b.id} className="bg-white rounded-xl border p-6 shadow-sm">
+          <article key={b.id} className="bg-white rounded-xl border p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
             {/* 🐴 Horse name at top (same style as Voting) */}
             {horseName && horseName !== "—" && (
               <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
@@ -766,7 +787,7 @@ function MyResults({ userId }) {
   if (loading) return <p>Loading results…</p>;
   if (rows.length === 0)
     return (
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No results yet</h3>
         <p className="text-sm text-gray-600 mt-1">When your ballots are drawn, results will appear here.</p>
       </div>
@@ -784,12 +805,6 @@ function MyResults({ userId }) {
             <div className="flex items-start justify-between gap-3">
               <div className="flex gap-3">
                 {horse?.photo_url && (
-                  <img
-                    src={horse.photo_url}
-                    alt={horse?.name || "Horse"}
-                    className="w-16 h-16 object-cover rounded"
-                  />
-                )}
                 <div>
                   {/* 🐴 Horse name at top (same style as Voting) */}
                   {horse?.name && (
@@ -1001,7 +1016,7 @@ function OpenVotes({ userId, ownedHorseIds }) {
   if (loading) return <p>Loading votes…</p>;
   if (votes.length === 0)
     return (
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No open votes right now</h3>
         <p className="text-sm text-gray-600 mt-1">When a new vote opens, it will appear here.</p>
       </div>
@@ -1169,7 +1184,7 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
   if (loading) return <p>Loading results…</p>;
   if (items.length === 0)
     return (
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No results yet</h3>
         <p className="text-sm text-gray-600 mt-1">
           Results will appear here once votes close.
@@ -1255,7 +1270,7 @@ function UpdatesTab({ ownedHorseIds }) {
       }
 
       // Pull horse name/photo
-      const horseIds = Array.from(new Set((ups || []).map(u => u.horse_id))).filter(Boolean);
+      const horseIds = Array.from(new Set((ups || []).map((u) => u.horse_id))).filter(Boolean);
       let horseMap = {};
       if (horseIds.length) {
         const { data: horses, error: hErr } = await supabase
@@ -1264,13 +1279,13 @@ function UpdatesTab({ ownedHorseIds }) {
           .in("id", horseIds);
         if (!hErr && horses) {
           horseMap = Object.fromEntries(
-            horses.map(h => [h.id, { name: h.name, photo_url: h.photo_url }])
+            horses.map((h) => [h.id, { name: h.name, photo_url: h.photo_url }])
           );
         }
       }
 
       setUpdates(
-        (ups || []).map(u => ({
+        (ups || []).map((u) => ({
           ...u,
           horse: horseMap[u.horse_id] || { name: "(Unknown horse)", photo_url: null },
         }))
@@ -1283,7 +1298,7 @@ function UpdatesTab({ ownedHorseIds }) {
   if (loading) return <p>Loading updates…</p>;
   if (updates.length === 0)
     return (
-      <div className="rounded-xl border bg-white p-6 shadow-sm">
+      <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No updates yet</h3>
         <p className="text-sm text-gray-600 mt-1">
           Updates for the horses you own will appear here.
@@ -1296,7 +1311,10 @@ function UpdatesTab({ ownedHorseIds }) {
       {updates.map((u) => {
         const when = new Date(u.published_at || u.created_at).toLocaleString();
         return (
-          <li key={u.id} className="bg-white rounded-xl border p-6 shadow-sm">
+          <li
+            key={u.id}
+            className="bg-white rounded-xl border p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10"
+          >
             {/* Top bar: Horse name (left) + time (right) */}
             <div className="flex items-baseline justify-between">
               <span className="inline-flex items-center px-2 py-0.5 rounded bg-green-50 border border-green-200 text-green-800 text-xs font-semibold">
@@ -1308,14 +1326,16 @@ function UpdatesTab({ ownedHorseIds }) {
             {/* Title */}
             <h3 className="mt-2 text-lg font-semibold text-green-900">{u.title}</h3>
 
-            {/* Image (optional) */}
-            {u.image_url && (
-              <img
-                src={u.image_url}
-                alt=""
-                className="mt-3 w-full max-h-64 object-cover rounded"
-              />
-            )}
+            {/* 👇 changed to square */}
+          {u.image_url && (
+  <div className="mt-3 w-full max-w-xs mx-auto aspect-square overflow-hidden rounded-md">
+    <img
+      src={u.image_url}
+      alt=""
+      className="w-full h-full object-cover"
+    />
+  </div>
+)}
 
             {/* Body (optional) */}
             {u.body && (
@@ -1342,338 +1362,463 @@ function UpdatesTab({ ownedHorseIds }) {
   );
 }
 
-
-
 /* ===========================
-   Renew Tab
-   - Shows renewal windows for horses the user owns
-   - Displays “X days left”
-   - Shows price per share and total for user's shares
-   - Sends confirmation email to the account holder after renewal
+   Renew Tab (top-up, proper open/closed rules, realtime)
 =========================== */
-function RenewTab({ userId, owned = [], userEmailProp = "" }) {
+export function RenewTab({ userId, owned = [] }) {
+  const router = useRouter(); // 👈 NEW
   const [loading, setLoading] = useState(true);
-  const [cycles, setCycles] = useState([]);
-  const [userEmail, setUserEmail] = useState(userEmailProp || "");
-  const [userName, setUserName] = useState(""); // ← NEW
+  const [entriesOpen, setEntriesOpen] = useState([]);
+  const [entriesClosed, setEntriesClosed] = useState([]);
+  const [inCartByCycle, setInCartByCycle] = useState({});
+  const [qtyByCycle, setQtyByCycle] = useState({});
+  const [addingId, setAddingId] = useState(null);
 
-  // currency (GBP)
+  // money + date formatters
   const gbp = useMemo(
     () => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }),
     []
   );
-  const fmtMoney = (n) => {
-    if (n === null || n === undefined || n === "" || Number.isNaN(Number(n))) return "—";
-    return gbp.format(Number(n));
+  const fmtMoney = (n) =>
+    n == null || Number.isNaN(Number(n)) ? "—" : gbp.format(Number(n));
+  const fmtDate = (v) => {
+    if (!v) return "—";
+    return new Date(v).toLocaleDateString("en-GB", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   };
 
-  // Resolve logged-in user's email + name once (prefer prop for email, but still fetch name)
-  useEffect(() => {
-    (async () => {
-      try {
-        if (userEmailProp) setUserEmail(userEmailProp);
-
-        const { data } = await supabase.auth.getUser();
-        const u = data?.user;
-
-        // Only set email from Supabase if no prop was provided
-        if (!userEmailProp) {
-          setUserEmail(u?.email || "");
-        }
-
-        const derivedName =
-          u?.user_metadata?.full_name ||
-          u?.user_metadata?.name ||
-          (u?.email ? u.email.split("@")[0] : "") ||
-          "";
-        setUserName(derivedName);
-      } catch {
-        if (!userEmailProp) setUserEmail("");
-        setUserName("");
-      }
-    })();
-  }, [userEmailProp]);
-
-  // Map horse_id -> shares owned, safe defaults
+  // horse_id -> shares owned
   const ownedByHorse = useMemo(() => {
     const safe = Array.isArray(owned) ? owned : [];
     return Object.fromEntries(
       safe
-        .filter((o) => o && o.horse && o.horse.id)
-        .map((o) => [o.horse.id, o.shares || 0])
+        .filter((o) => o?.horse?.id)
+        .map((o) => [o.horse.id, Number(o.shares || 0)])
     );
   }, [owned]);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
+  // single loader we can reuse (initial + realtime)
+  const loadRenewals = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
 
       const safeOwned = Array.isArray(owned) ? owned : [];
-      const horseIds = safeOwned
-        .filter((o) => o && o.horse && o.horse.id)
-        .map((o) => o.horse.id);
+      const horseIds = safeOwned.map((o) => o?.horse?.id).filter(Boolean);
 
       if (!horseIds.length) {
-        setCycles([]);
-        setLoading(false);
+        setEntriesOpen([]);
+        setEntriesClosed([]);
+        setInCartByCycle({});
+        setQtyByCycle({});
+        if (!silent) setLoading(false);
         return;
       }
 
-      // Pull price_per_share from SQL
+      // 1) fetch cycles
       const { data: rc, error: rcErr } = await supabase
         .from("renew_cycles")
         .select(
-          "id,horse_id,term_label,renew_start,renew_end,status,price_per_share,notes"
+          "id,horse_id,term_label,renew_period_start,renew_period_end,term_end_date,status,price_per_share"
         )
         .in("horse_id", horseIds)
-        .order("renew_end", { ascending: true });
-
+        .order("renew_period_end", { ascending: true });
       if (rcErr) console.error("[RenewTab] renew_cycles error:", rcErr);
+      const cyclesRaw = rc || [];
 
-      const list = rc || [];
-
-      // Get horse details
+      // 2) horses
+      const uniqHorseIds = Array.from(new Set(cyclesRaw.map((r) => r.horse_id)));
       const { data: hs, error: hErr } = await supabase
         .from("horses")
         .select("id,name,photo_url")
-        .in(
-          "id",
-          Array.from(new Set(list.map((r) => r.horse_id)))
-        );
-
+        .in("id", uniqHorseIds);
       if (hErr) console.error("[RenewTab] horses error:", hErr);
-
       const horseMap = Object.fromEntries((hs || []).map((h) => [h.id, h]));
 
-      // Which renewals has this user already done?
-      const cycleIds = list.map((r) => r.id);
-      const { data: myResp, error: rrErr } = await supabase
-        .from("renew_responses")
-        .select("renew_cycle_id")
-        .eq("user_id", userId)
-        .in("renew_cycle_id", cycleIds);
+      // 3) renew_responses (actual renewals)
+      const cycleIds = cyclesRaw.map((r) => r.id);
+      let renewedByCycle = {};
+      if (cycleIds.length) {
+        const { data: myResp, error: rrErr } = await supabase
+          .from("renew_responses")
+          .select("renew_cycle_id, shares")
+          .eq("user_id", userId)
+          .in("renew_cycle_id", cycleIds);
+        if (rrErr) console.error("[RenewTab] renew_responses error:", rrErr);
 
-      if (rrErr) console.error("[RenewTab] renew_responses error:", rrErr);
+        const agg = {};
+        (myResp || []).forEach((r) => {
+          agg[r.renew_cycle_id] =
+            (agg[r.renew_cycle_id] || 0) + Number(r.shares || 0);
+        });
+        renewedByCycle = agg;
+      }
 
-      const renewedSet = new Set((myResp || []).map((x) => x.renew_cycle_id));
-
+      // 4) enrich
       const now = Date.now();
-      const enriched = list.map((c) => {
-        const startMs = new Date(c.renew_start).getTime();
-        const endMs = new Date(c.renew_end).getTime();
-        const openNow = c.status === "open" && now >= startMs && now <= endMs;
-        const daysLeft = Math.max(
-          0,
-          Math.ceil((endMs - now) / (1000 * 60 * 60 * 24))
-        );
-        const ownedShares = ownedByHorse[c.horse_id] || 0;
+      const enriched = cyclesRaw.map((c) => {
+        const startMs = c.renew_period_start
+          ? new Date(c.renew_period_start).getTime()
+          : 0;
+        const endMs = c.renew_period_end
+          ? new Date(c.renew_period_end).getTime()
+          : 0;
+        const openNow =
+          c.status === "open" && startMs && endMs && now >= startMs && now <= endMs;
 
-        const price = c.price_per_share ?? null;
-        const total =
-          price != null ? Number(ownedShares) * Number(price) : null;
+        const ownedShares = ownedByHorse[c.horse_id] ?? 0;
+        const renewedShares = Number(renewedByCycle[c.id] || 0);
 
         return {
           cycle: c,
           horse: horseMap[c.horse_id] || { name: "(Horse)" },
           ownedShares,
-          alreadyRenewed: renewedSet.has(c.id),
+          renewedShares,
           openNow,
-          daysLeft,
-          price, // price per share
-          total, // total price
+          price: c.price_per_share ?? null,
+          title: c.term_label || "",
         };
       });
 
-      setCycles(enriched);
-      setLoading(false);
-    })();
-  }, [userId, owned, ownedByHorse]);
-
-  async function renew(c) {
-    if (!c.ownedShares || c.ownedShares <= 0) {
-      alert("You have no shares to renew for this horse.");
-      return;
-    }
-    if (!c.openNow) {
-      alert("This renewal window isn’t currently open.");
-      return;
-    }
-
-    // 1) Record the renewal
-    const { error } = await supabase.from("renew_responses").insert({
-      renew_cycle_id: c.cycle.id,
-      user_id: userId,
-      shares: c.ownedShares,
-    });
-
-    if (error) {
-      alert(error.message || "Could not record your renewal.");
-      return;
-    }
-
-    // 2) Send the email — route name must match your file: /api/send-renewal-email
-    try {
-      if (!userEmail) {
-        console.warn("[RenewTab] No user email; skipping email.");
-      } else {
-        const resp = await fetch("/api/send-renewal-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: userEmail,
-            horseName: c.horse?.name || "Horse",
-            renewalPeriod: c.cycle?.term_label || null,
-            amount: c.total ?? null,
-            name: userName || "Owner", // ← send the name we resolved earlier
-          }),
+      // 5) cart items for renewals
+      let inCartMap = {};
+      try {
+        const cart = await cartApi.getOrCreateCart();
+        const { data: cartRenewals } = await supabase
+          .from("cart_items")
+          .select("renew_cycle_id, qty")
+          .eq("cart_id", cart.id)
+          .eq("item_type", "renewal");
+        (cartRenewals || []).forEach((row) => {
+          if (row.renew_cycle_id)
+            inCartMap[row.renew_cycle_id] = Number(row.qty || 0);
         });
-
-        if (!resp.ok) {
-          const text = await resp.text();
-          console.error(
-            "Renewal email API error:",
-            resp.status,
-            text
-          );
-        } else {
-          const j = await resp.json().catch(() => ({}));
-          console.log("Renewal email sent:", j);
-        }
+        setInCartByCycle(inCartMap);
+      } catch {
+        // ignore
       }
-    } catch (e) {
-      console.error("[RenewTab] Email fetch failed:", e);
-    }
 
-    // 3) Mark as renewed in UI
-    setCycles((items) =>
-      items.map((it) =>
-        it.cycle.id === c.cycle.id
-          ? { ...it, alreadyRenewed: true }
-          : it
+      // 6) split
+      const openList = [];
+      const closedList = [];
+
+      enriched.forEach((e) => {
+        const cid = e.cycle.id;
+        const inCart = Number(inCartMap[cid] || 0);
+        const remaining = Math.max(
+          0,
+          Number(e.ownedShares) - Number(e.renewedShares) - inCart
+        );
+
+        const showInClosed =
+          (e.cycle.status !== "open" && !e.openNow) || e.renewedShares > 0;
+
+        if (showInClosed) {
+          closedList.push({
+            ...e,
+            inCart,
+            remaining: Math.max(
+              0,
+              Number(e.ownedShares) - Number(e.renewedShares)
+            ),
+          });
+        } else {
+          openList.push({
+            ...e,
+            inCart,
+            remaining,
+          });
+        }
+      });
+
+      const initialQty = {};
+      openList.forEach((e) => {
+        initialQty[e.cycle.id] = e.remaining > 0 ? e.remaining : 0;
+      });
+      setQtyByCycle(initialQty);
+
+      setEntriesOpen(openList);
+      setEntriesClosed(closedList);
+      if (!silent) setLoading(false);
+    },
+    [owned, ownedByHorse, userId]
+  );
+
+  // initial load
+  useEffect(() => {
+    loadRenewals();
+  }, [loadRenewals]);
+
+  // realtime
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel("renew-responses-" + userId)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "renew_responses",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          loadRenewals(true);
+        }
       )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, loadRenewals]);
+
+  // add to basket
+  async function addRenewalToBasket(entry) {
+    const cid = entry.cycle.id;
+    const inCart = Number(inCartByCycle[cid] || 0);
+    const remaining = Math.max(
+      0,
+      Number(entry.ownedShares || 0) - Number(entry.renewedShares || 0) - inCart
     );
+    const want = Math.min(Math.max(1, Number(qtyByCycle[cid] || 0)), remaining);
+
+    if (!entry.openNow) return alert("This renewal window isn’t currently open.");
+    if (entry.price == null) return alert("No renewal price is set yet.");
+    if (remaining <= 0) return;
+
+    try {
+      setAddingId(cid);
+      const cart = await cartApi.getOrCreateCart();
+      await cartApi.addRenewalToCart({
+        cartId: cart.id,
+        renewCycleId: cid,
+        qty: want,
+        pricePerShareGBP: entry.price,
+      });
+
+      // optimistic update
+      const newInCart = inCart + want;
+      setInCartByCycle((prev) => ({ ...prev, [cid]: newInCart }));
+      const newRemaining =
+        Math.max(
+          0,
+          Number(entry.ownedShares || 0) -
+            Number(entry.renewedShares || 0) -
+            newInCart
+        );
+      setQtyByCycle((prev) => ({
+        ...prev,
+        [cid]: newRemaining > 0 ? newRemaining : 0,
+      }));
+
+      // 👇 NEW: send them straight to the basket
+      router.push("/cart");
+    } catch (e) {
+      console.error("[RenewTab] add to basket failed:", e);
+      alert(e?.message || "Could not add renewal to basket.");
+    } finally {
+      setAddingId(null);
+    }
   }
 
+  // RENDER
   if (loading) return <p>Loading renewals…</p>;
-  if (!cycles.length)
+
+  if (!entriesOpen.length && !entriesClosed.length) {
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm">
-        <h3 className="font-semibold text-green-900">
-          You have no horses to renew yet.
-        </h3>
+        <h3 className="font-semibold text-green-900">You have no horses to renew yet.</h3>
         <p className="text-sm text-gray-600 mt-1">
           When a renewal window opens, it’ll appear here.
         </p>
       </div>
     );
+  }
 
   return (
-    <div className="space-y-4">
-      {cycles.map((c) => (
-        <article
-          key={c.cycle.id}
-          className="rounded-xl border bg-white p-5 shadow-sm"
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              {c.horse?.photo_url && (
-                <img
-                  src={c.horse.photo_url}
-                  alt={c.horse?.name || "Horse"}
-                  className="w-14 h-14 rounded object-cover"
-                />
-              )}
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-lg font-semibold text-green-900">
-                    {c.horse?.name || "Horse"}
-                  </h3>
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${
-                      c.openNow
-                        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                        : "bg-gray-50 border-gray-200 text-gray-700"
-                    }`}
-                  >
-                    {c.openNow
-                      ? "Open"
-                      : c.cycle.status === "closed"
-                      ? "Closed"
-                      : "Scheduled"}
-                  </span>
-                  {c.cycle.term_label && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-50 border border-gray-200 text-gray-700">
-                      {c.cycle.term_label}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-600 mt-1">
-                  {new Date(c.cycle.renew_start).toLocaleString()} →{" "}
-                  {new Date(c.cycle.renew_end).toLocaleString()}
-                </p>
-                <div className="text-sm text-gray-700 mt-2 space-y-0.5">
-                  <p>
-                    You own <strong>{c.ownedShares}</strong> share
-                    {c.ownedShares === 1 ? "" : "s"} in this horse.
-                  </p>
-                  <p>
-                    Price per share: <strong>{fmtMoney(c.price)}</strong>
-                  </p>
-                  <p>
-                    Total for your shares:{" "}
-                    <strong>{fmtMoney(c.total)}</strong>
-                  </p>
-                  {c.cycle?.notes && (
-                    <p className="text-xs text-gray-600 mt-1">
-                      {c.cycle.notes}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
+    <div className="space-y-6">
+      {/* OPEN / ACTIONABLE */}
+      {entriesOpen.length > 0 && (
+        <section className="space-y-4">
+          {entriesOpen.map((e) => {
+            const cid = e.cycle.id;
+            const showQty = e.remaining > 0;
+            const showButton = e.remaining > 0;
 
-            <div className="text-right">
-              {c.openNow && !c.alreadyRenewed ? (
-                <div>
-                  <div className="text-sm text-gray-600 mb-1">
-                    {c.daysLeft > 0 ? (
-                      <>
-                        <strong>{c.daysLeft}</strong> days left to renew
-                      </>
-                    ) : (
-                      "Closes today"
+            return (
+              <article key={cid} className="rounded-xl border bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    {e.horse?.photo_url && (
+                      <img
+                        src={e.horse.photo_url}
+                        alt={e.horse?.name || "Horse"}
+                        className="w-14 h-14 rounded object-cover"
+                      />
                     )}
+
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-semibold text-green-900">
+                          {e.horse?.name || "Horse"}
+                        </h3>
+                        {e.title && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-50 border border-gray-200 text-gray-700">
+                            {e.title}
+                          </span>
+                        )}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs border bg-emerald-50 border-emerald-200 text-emerald-800">
+                          Renewed {e.renewedShares}/{e.ownedShares}
+                        </span>
+                      </div>
+
+                      <p className="text-sm text-gray-800 mt-2">
+                        <span className="font-semibold">Renewal deadline — </span>
+                        {fmtDate(e.cycle.renew_period_end)}
+                      </p>
+                      {e.cycle.term_end_date && (
+                        <p className="text-sm text-gray-700 mt-1">
+                          <span className="font-semibold">Term ends — </span>
+                          {fmtDate(e.cycle.term_end_date)}
+                        </p>
+                      )}
+
+                      <div className="text-sm text-gray-700 mt-3 space-y-0.5">
+                        <p>
+                          Price per share: <strong>{fmtMoney(e.price)}</strong>
+                        </p>
+                        {e.inCart > 0 ? (
+                          <p>
+                            In basket: <strong>{e.inCart}</strong>{" "}
+                            (remaining this period: <strong>{e.remaining}</strong>)
+                          </p>
+                        ) : (
+                          <p>
+                            If renewing all now:{" "}
+                            <strong>
+                              {fmtMoney(
+                                Number(e.ownedShares) * Number(e.price || 0)
+                              )}
+                            </strong>
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => renew(c)}
-                    disabled={c.ownedShares <= 0}
-                    className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
-                    title={
-                      c.price != null
-                        ? `Will email confirmation for ${fmtMoney(
-                            c.total
-                          )} (${fmtMoney(c.price)} × ${c.ownedShares})`
-                        : undefined
+
+                  <div className="text-right w-56">
+                    <div className="flex items-center gap-2 justify-end">
+                      {showQty && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-sm">Qty:</label>
+                          <select
+                            value={Math.min(qtyByCycle[cid] || 1, e.remaining) || 1}
+                            className="border rounded px-2 py-1 text-sm"
+                            onChange={(ev) =>
+                              setQtyByCycle((prev) => ({
+                                ...prev,
+                                [cid]: Math.max(
+                                  1,
+                                  Math.min(e.remaining, Number(ev.target.value))
+                                ),
+                              }))
+                            }
+                          >
+                            {Array.from({ length: e.remaining }, (_, i) => i + 1).map(
+                              (n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              )
+                            )}
+                          </select>
+                        </div>
+                      )}
+
+                      {showButton ? (
+                        <button
+                          onClick={() => addRenewalToBasket(e)}
+                          disabled={addingId === cid}
+                          className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50 text-sm"
+                        >
+                          {addingId === cid ? "Adding…" : "Add to basket"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-500 text-right">
+                          All your shares for this period are already in the basket
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
+
+      {/* CLOSED / COMPLETED */}
+      {entriesClosed.length > 0 && (
+        <section className="space-y-2">
+          <h4 className="text-sm font-semibold text-gray-700">
+            Closed or completed renewals
+          </h4>
+          <div className="divide-y rounded-lg border bg-white">
+            {entriesClosed.map((e) => {
+              const userRenewed = Number(e.renewedShares || 0) > 0;
+              const termDateToShow =
+                e.cycle.term_end_date || e.cycle.renew_period_end || null;
+
+              return (
+                <div
+                  key={e.cycle.id}
+                  className="flex items-center justify-between px-4 py-3"
+                >
+                  <div className="flex items-center gap-3">
+                    {e.horse?.photo_url && (
+                      <img
+                        src={e.horse.photo_url}
+                        alt={e.horse?.name || "Horse"}
+                        className="w-8 h-8 rounded object-cover"
+                      />
+                    )}
+                    <div className="text-sm">
+                      <div className="font-medium text-green-900">
+                        {e.horse?.name || "Horse"}
+                      </div>
+                      <div className="text-gray-600">
+                        {e.title || "Renewal"} · You renewed{" "}
+                        <strong>{Number(e.renewedShares || 0)}</strong> share
+                        {Number(e.renewedShares || 0) === 1 ? "" : "s"}
+                      </div>
+
+                      {userRenewed && termDateToShow && (
+                        <div className="text-xs text-gray-500">
+                          Term ends — {fmtDate(termDateToShow)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <span
+                    className={
+                      "text-xs rounded border px-2 py-0.5 " +
+                      (userRenewed
+                        ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                        : "text-gray-700 bg-gray-50 border-gray-200")
                     }
                   >
-                    Renew {c.ownedShares} share
-                    {c.ownedShares === 1 ? "" : "s"}
-                    {c.price != null && <> — {fmtMoney(c.total)}</>}
-                  </button>
+                    {userRenewed ? "Renewal purchased" : "Closed"}
+                  </span>
                 </div>
-              ) : c.alreadyRenewed ? (
-                <span className="inline-flex items-center px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800 text-sm">
-                  ✅ Renewal recorded
-                </span>
-              ) : (
-                <span className="inline-flex items-center px-3 py-1 rounded bg-gray-50 border border-gray-200 text-gray-700 text-sm">
-                  Not open
-                </span>
-              )}
-            </div>
+              );
+            })}
           </div>
-        </article>
-      ))}
+        </section>
+      )}
     </div>
   );
 }
@@ -1703,7 +1848,7 @@ function LoseCard() {
   );
 }
 
-// ---- WalletTab (Recent activity with explicit timestamps & statuses) ----
+// ---- WalletTab (Recent activity incl. wallet debits used at checkout) ----
 function WalletTab({ userId: userIdProp }) {
   const [loading, setLoading] = useState(true);
   const [notConfigured, setNotConfigured] = useState(false);
@@ -1712,7 +1857,7 @@ function WalletTab({ userId: userIdProp }) {
   const [balance, setBalance] = useState(0);
   const [activity, setActivity] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [confirming, setConfirming] = useState(false); // 🆕 new state
+  const [confirming, setConfirming] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -1746,15 +1891,16 @@ function WalletTab({ userId: userIdProp }) {
       }
 
       try {
+        // Wallet transactions: credits & debits (e.g. “Applied to purchase”)
         const { data: tx } = await supabase
           .from("wallet_transactions")
           .select("amount, type, status, memo, created_at")
           .eq("user_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(50);
+          .order("created_at", { ascending: false });
 
         const txRows = tx || [];
 
+        // Compute balance from POSTED rows only
         const postedCredits = txRows
           .filter(t => t.status === "posted" && t.type === "credit")
           .reduce((s, t) => s + Number(t.amount || 0), 0);
@@ -1763,6 +1909,7 @@ function WalletTab({ userId: userIdProp }) {
           .reduce((s, t) => s + Number(t.amount || 0), 0);
         setBalance(Math.max(0, postedCredits - postedDebits));
 
+        // Map credits -> feed
         const creditEvents = txRows
           .filter(t => t.type === "credit")
           .map(t => ({
@@ -1770,8 +1917,21 @@ function WalletTab({ userId: userIdProp }) {
             amount: Number(t.amount || 0),
             memo: t.memo || "Winnings",
             at: t.created_at,
+            status: t.status || "posted",
           }));
 
+        // ✅ NEW: Map debits (wallet used toward purchases) -> feed
+        const debitEvents = txRows
+          .filter(t => t.type === "debit")
+          .map(t => ({
+            kind: "debit",
+            amount: Number(t.amount || 0),
+            memo: t.memo || "Wallet used toward a purchase",
+            at: t.created_at,
+            status: t.status || "posted",
+          }));
+
+        // Withdrawals table stays as-is
         const { data: wr } = await supabase
           .from("wallet_withdrawals")
           .select("id, amount, status, created_at, processed_at")
@@ -1787,7 +1947,8 @@ function WalletTab({ userId: userIdProp }) {
           paid_at: r.processed_at || null,
         }));
 
-        const merged = [...creditEvents, ...withdrawalEvents].sort((a, b) => {
+        // Merge & sort (desc by time)
+        const merged = [...creditEvents, ...debitEvents, ...withdrawalEvents].sort((a, b) => {
           const ta = a.kind === "withdrawal" ? a.requested_at : a.at;
           const tb = b.kind === "withdrawal" ? b.requested_at : b.at;
           return new Date(tb) - new Date(ta);
@@ -1812,7 +1973,6 @@ function WalletTab({ userId: userIdProp }) {
     setMsg("");
 
     if (!confirming) {
-      // First click: ask for confirmation
       setConfirming(true);
       return;
     }
@@ -1859,7 +2019,7 @@ function WalletTab({ userId: userIdProp }) {
   }
 
   return (
-    <div id="panel-wallet" className="rounded-xl border bg-white p-6 shadow-sm">
+    <div id="panel-wallet" className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
       <h2 className="text-2xl font-bold text-green-900 mb-2">Wallet</h2>
 
       {loading ? (
@@ -1891,7 +2051,9 @@ function WalletTab({ userId: userIdProp }) {
                     step="0.01"
                     value={form.amount}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2"
+                    className="mt-1 w-full border rounded px-3 py-2
+           bg-white text-gray-900 placeholder-gray-400 border-gray-300
+           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                   />
                 </label>
                 <label className="text-sm">
@@ -1900,7 +2062,9 @@ function WalletTab({ userId: userIdProp }) {
                     name="account_name"
                     value={form.account_name}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2"
+                    className="mt-1 w-full border rounded px-3 py-2
+           bg-white text-gray-900 placeholder-gray-400 border-gray-300
+           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                   />
                 </label>
               </div>
@@ -1913,7 +2077,9 @@ function WalletTab({ userId: userIdProp }) {
                     inputMode="numeric"
                     value={form.sort_code}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2"
+                    className="mt-1 w-full border rounded px-3 py-2
+           bg-white text-gray-900 placeholder-gray-400 border-gray-300
+           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                     placeholder="e.g. 112233"
                   />
                 </label>
@@ -1924,7 +2090,9 @@ function WalletTab({ userId: userIdProp }) {
                     inputMode="numeric"
                     value={form.account_number}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2"
+                    className="mt-1 w-full border rounded px-3 py-2
+           bg-white text-gray-900 placeholder-gray-400 border-gray-300
+           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                     placeholder="e.g. 12345678"
                   />
                 </label>
@@ -1969,36 +2137,45 @@ function WalletTab({ userId: userIdProp }) {
                       <li key={i} className="py-2">
                         <div className="font-medium text-emerald-700">+£{fmtGBP(ev.amount)}</div>
                         {ev.memo && <div className="text-xs text-gray-700 mt-0.5">{ev.memo}</div>}
-                        <div className="text-xs text-gray-600 mt-0.5">
-                          Winnings paid at — {fmtDate(ev.at)}
-                        </div>
-                      </li>
-                    );
-                  } else {
-                    return (
-                      <li key={i} className="py-2">
-                        <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
-                        <div className="text-xs text-gray-600 mt-0.5">
-                          Withdrawal request made — {fmtDate(ev.requested_at)}
-                        </div>
-                        {ev.paid_at && (
-                          <div className="text-xs text-gray-600">Paid at — {fmtDate(ev.paid_at)}</div>
-                        )}
-                        <div className="text-xs mt-1">
-                          {ev.status === "requested" && (
-                            <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700">
-                              Requested
-                            </span>
-                          )}
-                          {ev.status === "paid" && (
-                            <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
-                              Paid
-                            </span>
-                          )}
-                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">Winnings paid at — {fmtDate(ev.at)}</div>
                       </li>
                     );
                   }
+                  if (ev.kind === "debit") {
+                    return (
+                      <li key={i} className="py-2">
+                        <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
+                        <div className="text-xs text-gray-700 mt-0.5">
+                          {ev.memo || "Wallet used toward a purchase"}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">Debited at — {fmtDate(ev.at)}</div>
+                      </li>
+                    );
+                  }
+                  // withdrawal
+                  return (
+                    <li key={i} className="py-2">
+                      <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        Withdrawal request made — {fmtDate(ev.requested_at)}
+                      </div>
+                      {ev.paid_at && (
+                        <div className="text-xs text-gray-600">Paid at — {fmtDate(ev.paid_at)}</div>
+                      )}
+                      <div className="text-xs mt-1">
+                        {ev.status === "requested" && (
+                          <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700">
+                            Requested
+                          </span>
+                        )}
+                        {ev.status === "paid" && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700">
+                            Paid
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
                 })}
               </ul>
             )}

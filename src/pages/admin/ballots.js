@@ -2750,6 +2750,10 @@ function ManageVotesCard() {
 
 /* ===========================
    RENEWALS (ADMIN) — horse name + shares count + price per share + edit/delete + process (persisted)
+   UPDATED to:
+   - renew_period_start (was renew_start)
+   - renew_period_end   (was renew_end)
+   - term_end_date      (new)
 =========================== */
 function ManageRenewalsCard() {
   const [horses, setHorses] = useState([]);
@@ -2763,8 +2767,9 @@ function ManageRenewalsCard() {
   const [form, setForm] = useState({
     horse_id: "",
     term_label: "",
-    renew_start: "",
-    renew_end: "",
+    renew_period_start: "",
+    renew_period_end: "",
+    term_end_date: "",
     notes: "",
     price_per_share: "", // persisted
   });
@@ -2774,19 +2779,22 @@ function ManageRenewalsCard() {
   const [editForm, setEditForm] = useState({
     horse_id: "",
     term_label: "",
-    renew_start: "",
-    renew_end: "",
+    renew_period_start: "",
+    renew_period_end: "",
+    term_end_date: "",
     notes: "",
     status: "open",
-    price_per_share: "", // persisted
+    price_per_share: "",
   });
 
   // --- datetime helpers (local <-> ISO) ---
   function toLocalInputValue(dateLike) {
     if (!dateLike) return "";
     const d = new Date(dateLike);
-    const pad = n => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+      d.getHours()
+    )}:${pad(d.getMinutes())}`;
   }
   function localInputToISO(localStr) {
     if (!localStr) return null;
@@ -2795,7 +2803,7 @@ function ManageRenewalsCard() {
 
   // money helpers
   const gbp = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
-  const fmtPrice = v => (v === null || v === undefined || v === "" ? "—" : gbp.format(Number(v)));
+  const fmtPrice = (v) => (v === null || v === undefined || v === "" ? "—" : gbp.format(Number(v)));
   function parseMoney(v) {
     if (v === "" || v === null || v === undefined) return null;
     const normalized = String(v).replace(",", ".");
@@ -2820,8 +2828,9 @@ function ManageRenewalsCard() {
           id,
           horse_id,
           term_label,
-          renew_start,
-          renew_end,
+          renew_period_start,
+          renew_period_end,
+          term_end_date,
           status,
           notes,
           processed_at,
@@ -2832,18 +2841,21 @@ function ManageRenewalsCard() {
       if (error) throw error;
 
       const list = data || [];
-      if (list.length === 0) { setRows([]); return; }
+      if (list.length === 0) {
+        setRows([]);
+        return;
+      }
 
       // horse_id -> name
-      const horseIds = Array.from(new Set(list.map(r => r.horse_id))).filter(Boolean);
+      const horseIds = Array.from(new Set(list.map((r) => r.horse_id))).filter(Boolean);
       let horseMap = {};
       if (horseIds.length) {
         const { data: hs } = await supabase.from("horses").select("id,name").in("id", horseIds);
-        horseMap = Object.fromEntries((hs || []).map(h => [h.id, h.name]));
+        horseMap = Object.fromEntries((hs || []).map((h) => [h.id, h.name]));
       }
 
       // sum renewed shares per cycle
-      const ids = list.map(r => r.id);
+      const ids = list.map((r) => r.id);
       let sharesByCycle = {};
       if (ids.length) {
         const { data: resp, error: rErr } = await supabase
@@ -2858,11 +2870,13 @@ function ManageRenewalsCard() {
         }, {});
       }
 
-      setRows(list.map(r => ({
-        ...r,
-        horse_name: horseMap[r.horse_id] || "(Unknown horse)",
-        renew_count: sharesByCycle[r.id] || 0,
-      })));
+      setRows(
+        list.map((r) => ({
+          ...r,
+          horse_name: horseMap[r.horse_id] || "(Unknown horse)",
+          renew_count: sharesByCycle[r.id] || 0,
+        }))
+      );
     } catch (e) {
       console.error("[ManageRenewalsCard] load error:", e);
       setRows([]);
@@ -2873,7 +2887,7 @@ function ManageRenewalsCard() {
 
   function onChange(e) {
     const { name, value } = e.target;
-    setForm(p => ({ ...p, [name]: value }));
+    setForm((p) => ({ ...p, [name]: value }));
   }
 
   async function createCycle(e) {
@@ -2882,11 +2896,14 @@ function ManageRenewalsCard() {
     setMsg("");
     try {
       if (!form.horse_id) throw new Error("Select a horse");
-      if (!form.renew_start || !form.renew_end) throw new Error("Set start/end dates");
+      if (!form.renew_period_start || !form.renew_period_end)
+        throw new Error("Set renew period start/end");
 
-      const startISO = localInputToISO(form.renew_start);
-      const endISO = localInputToISO(form.renew_end);
-      if (new Date(endISO) <= new Date(startISO)) throw new Error("End must be after start");
+      const startISO = localInputToISO(form.renew_period_start);
+      const endISO = localInputToISO(form.renew_period_end);
+      if (new Date(endISO) <= new Date(startISO)) throw new Error("Renew period end must be after start");
+
+      const termEndISO = form.term_end_date ? localInputToISO(form.term_end_date) : null;
 
       const price = parseMoney(form.price_per_share);
       if (price === null || price < 0) throw new Error("Enter a valid price per share (≥ 0).");
@@ -2894,18 +2911,27 @@ function ManageRenewalsCard() {
       const payload = {
         horse_id: form.horse_id,
         term_label: form.term_label?.trim() || null,
-        renew_start: startISO,
-        renew_end: endISO,
+        renew_period_start: startISO,
+        renew_period_end: endISO,
+        term_end_date: termEndISO,
         notes: form.notes?.trim() || null,
         status: "open",
-        price_per_share: price, // persist to SQL
+        price_per_share: price,
       };
 
       const { error: createErr } = await supabase.from("renew_cycles").insert(payload);
       if (createErr) throw createErr;
 
       setMsg("✅ Renewal window created & opened.");
-      setForm({ horse_id: "", term_label: "", renew_start: "", renew_end: "", notes: "", price_per_share: "" });
+      setForm({
+        horse_id: "",
+        term_label: "",
+        renew_period_start: "",
+        renew_period_end: "",
+        term_end_date: "",
+        notes: "",
+        price_per_share: "",
+      });
       await load();
     } catch (e) {
       alert(e.message || "Failed to create renewal");
@@ -2919,8 +2945,9 @@ function ManageRenewalsCard() {
     setEditForm({
       horse_id: row.horse_id || "",
       term_label: row.term_label || "",
-      renew_start: toLocalInputValue(row.renew_start),
-      renew_end: toLocalInputValue(row.renew_end),
+      renew_period_start: toLocalInputValue(row.renew_period_start),
+      renew_period_end: toLocalInputValue(row.renew_period_end),
+      term_end_date: toLocalInputValue(row.term_end_date),
       notes: row.notes || "",
       status: row.status || "open",
       price_per_share: row.price_per_share ?? "",
@@ -2930,11 +2957,14 @@ function ManageRenewalsCard() {
   async function saveEdit(id) {
     try {
       if (!editForm.horse_id) throw new Error("Select a horse");
-      if (!editForm.renew_start || !editForm.renew_end) throw new Error("Set start/end dates");
+      if (!editForm.renew_period_start || !editForm.renew_period_end)
+        throw new Error("Set renew period start/end");
 
-      const startISO = localInputToISO(editForm.renew_start);
-      const endISO = localInputToISO(editForm.renew_end);
-      if (new Date(endISO) <= new Date(startISO)) throw new Error("End must be after start");
+      const startISO = localInputToISO(editForm.renew_period_start);
+      const endISO = localInputToISO(editForm.renew_period_end);
+      if (new Date(endISO) <= new Date(startISO)) throw new Error("Renew period end must be after start");
+
+      const termEndISO = editForm.term_end_date ? localInputToISO(editForm.term_end_date) : null;
 
       const price = parseMoney(editForm.price_per_share);
       if (price === null || price < 0) throw new Error("Enter a valid price per share (≥ 0).");
@@ -2942,11 +2972,12 @@ function ManageRenewalsCard() {
       const payload = {
         horse_id: editForm.horse_id,
         term_label: editForm.term_label?.trim() || null,
-        renew_start: startISO,
-        renew_end: endISO,
+        renew_period_start: startISO,
+        renew_period_end: endISO,
+        term_end_date: termEndISO,
         notes: editForm.notes?.trim() || null,
         status: editForm.status,
-        price_per_share: price, // persist to SQL
+        price_per_share: price,
       };
 
       const { error: updateErr } = await supabase.from("renew_cycles").update(payload).eq("id", id);
@@ -2975,9 +3006,14 @@ function ManageRenewalsCard() {
 
   // Apply renew decisions to ownerships (RPC), then persist processed_at so it sticks after reload
   async function processCycle(id) {
-    const row = rows.find(r => r.id === id);
+    const row = rows.find((r) => r.id === id);
     if (row?.processed_at) return;
-    if (!confirm("This will update ownerships for this renewal window:\n• Set each owner’s shares to the renewed amount\n• Delete owners who didn’t renew\n\nProceed?")) return;
+    if (
+      !confirm(
+        "This will update ownerships for this renewal window:\n• Set each owner’s shares to the renewed amount\n• Delete owners who didn’t renew\n\nProceed?"
+      )
+    )
+      return;
 
     setProcessingId(id);
     try {
@@ -2990,7 +3026,7 @@ function ManageRenewalsCard() {
         .eq("id", id);
       if (markErr) throw markErr;
 
-      const summary = (data || []).map(r => `${r.action}: ${r.affected}`).join("\n");
+      const summary = (data || []).map((r) => `${r.action}: ${r.affected}`).join("\n");
       alert(`✅ Processing complete.\n\n${summary}`);
 
       await load();
@@ -3004,9 +3040,7 @@ function ManageRenewalsCard() {
   return (
     <section className="bg-white rounded-xl border shadow-sm p-6">
       <h2 className="text-xl font-semibold text-green-900">Renewals</h2>
-      <p className="text-sm text-gray-600 mt-1">
-        Create, edit, close or delete renewal windows after a syndicate term ends.
-      </p>
+      <p className="text-sm text-gray-600 mt-1">Create, edit, close or delete renewal windows.</p>
 
       {/* Create */}
       <form onSubmit={createCycle} className="mt-4 grid gap-3">
@@ -3021,8 +3055,10 @@ function ManageRenewalsCard() {
               required
             >
               <option value="">— Select horse —</option>
-              {horses.map(h => (
-                <option key={h.id} value={h.id}>{h.name}</option>
+              {horses.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name}
+                </option>
               ))}
             </select>
           </label>
@@ -3038,27 +3074,38 @@ function ManageRenewalsCard() {
           </label>
         </div>
 
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-4 gap-3">
           <label className="text-sm">
-            Renew start
+            Renew period start
             <input
               type="datetime-local"
-              name="renew_start"
-              value={form.renew_start}
+              name="renew_period_start"
+              value={form.renew_period_start}
               onChange={onChange}
               className="mt-1 w-full border rounded px-3 py-2"
               required
             />
           </label>
           <label className="text-sm">
-            Renew end
+            Renew period end
             <input
               type="datetime-local"
-              name="renew_end"
-              value={form.renew_end}
+              name="renew_period_end"
+              value={form.renew_period_end}
               onChange={onChange}
               className="mt-1 w-full border rounded px-3 py-2"
               required
+            />
+          </label>
+          <label className="text-sm">
+            Term end date
+            <input
+              type="datetime-local"
+              name="term_end_date"
+              value={form.term_end_date}
+              onChange={onChange}
+              className="mt-1 w-full border rounded px-3 py-2"
+              placeholder="optional"
             />
           </label>
           <label className="text-sm">
@@ -3089,7 +3136,11 @@ function ManageRenewalsCard() {
         </label>
 
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={saving} className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50">
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
+          >
             {saving ? "Creating…" : "Create & open renewal"}
           </button>
           {msg && <span className="text-sm">{msg}</span>}
@@ -3105,7 +3156,7 @@ function ManageRenewalsCard() {
           <p className="mt-2 text-gray-600">No renewal windows yet.</p>
         ) : (
           <ul className="mt-3 divide-y">
-            {rows.map(r => {
+            {rows.map((r) => {
               const editing = editingId === r.id;
               const processed = Boolean(r.processed_at);
 
@@ -3123,10 +3174,22 @@ function ManageRenewalsCard() {
                           )}
                         </div>
                         <div className="text-xs text-gray-600 mt-1">
-                          {r.renew_count} share{r.renew_count === 1 ? "" : "s"} renewed • Price: {fmtPrice(r.price_per_share)}
+                          {r.renew_count} share{r.renew_count === 1 ? "" : "s"} renewed • Price:{" "}
+                          {fmtPrice(r.price_per_share)}
                         </div>
                         <div className="text-xs text-gray-600">
-                          {new Date(r.renew_start).toLocaleString()} → {new Date(r.renew_end).toLocaleString()}
+                          Renew period:{" "}
+                          {r.renew_period_start
+                            ? new Date(r.renew_period_start).toLocaleString()
+                            : "—"}{" "}
+                          →{" "}
+                          {r.renew_period_end
+                            ? new Date(r.renew_period_end).toLocaleString()
+                            : "—"}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Term ends:{" "}
+                          {r.term_end_date ? new Date(r.term_end_date).toLocaleString() : "—"}
                         </div>
                         {r.notes && <div className="text-xs text-gray-600 mt-1">{r.notes}</div>}
                       </div>
@@ -3146,13 +3209,23 @@ function ManageRenewalsCard() {
                             onClick={() => processCycle(r.id)}
                             disabled={processed || processingId === r.id}
                             className={`px-3 py-1 border rounded text-sm ${
-                              processed ? "bg-gray-200 text-gray-500 cursor-not-allowed"
-                              : processingId === r.id ? "opacity-70 cursor-wait"
-                              : "hover:bg-gray-50"
+                              processed
+                                ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                                : processingId === r.id
+                                ? "opacity-70 cursor-wait"
+                                : "hover:bg-gray-50"
                             }`}
-                            title={processed ? "Already processed" : "Apply renew decisions to ownerships"}
+                            title={
+                              processed
+                                ? "Already processed"
+                                : "Apply renew decisions to ownerships"
+                            }
                           >
-                            {processed ? "Processed" : (processingId === r.id ? "Processing…" : "Process Non-Renewals")}
+                            {processed
+                              ? "Processed"
+                              : processingId === r.id
+                              ? "Processing…"
+                              : "Process Non-Renewals"}
                           </button>
                         )}
 
@@ -3177,12 +3250,16 @@ function ManageRenewalsCard() {
                           Horse
                           <select
                             value={editForm.horse_id}
-                            onChange={e => setEditForm(p => ({ ...p, horse_id: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, horse_id: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                           >
                             <option value="">— Select horse —</option>
-                            {horses.map(h => (
-                              <option key={h.id} value={h.id}>{h.name}</option>
+                            {horses.map((h) => (
+                              <option key={h.id} value={h.id}>
+                                {h.name}
+                              </option>
                             ))}
                           </select>
                         </label>
@@ -3190,28 +3267,45 @@ function ManageRenewalsCard() {
                           Term label
                           <input
                             value={editForm.term_label}
-                            onChange={e => setEditForm(p => ({ ...p, term_label: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, term_label: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                           />
                         </label>
                       </div>
 
-                      <div className="grid sm:grid-cols-4 gap-3 mt-2">
+                      <div className="grid sm:grid-cols-5 gap-3 mt-2">
                         <label className="text-sm">
-                          Start
+                          Renew period start
                           <input
                             type="datetime-local"
-                            value={editForm.renew_start}
-                            onChange={e => setEditForm(p => ({ ...p, renew_start: e.target.value }))}
+                            value={editForm.renew_period_start}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, renew_period_start: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                           />
                         </label>
                         <label className="text-sm">
-                          End
+                          Renew period end
                           <input
                             type="datetime-local"
-                            value={editForm.renew_end}
-                            onChange={e => setEditForm(p => ({ ...p, renew_end: e.target.value }))}
+                            value={editForm.renew_period_end}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, renew_period_end: e.target.value }))
+                            }
+                            className="mt-1 w-full border rounded px-3 py-2"
+                          />
+                        </label>
+                        <label className="text-sm">
+                          Term end date
+                          <input
+                            type="datetime-local"
+                            value={editForm.term_end_date}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, term_end_date: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                           />
                         </label>
@@ -3219,7 +3313,9 @@ function ManageRenewalsCard() {
                           Status
                           <select
                             value={editForm.status}
-                            onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, status: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                           >
                             <option value="open">Open</option>
@@ -3233,7 +3329,9 @@ function ManageRenewalsCard() {
                             step="0.01"
                             min="0"
                             value={editForm.price_per_share}
-                            onChange={e => setEditForm(p => ({ ...p, price_per_share: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((p) => ({ ...p, price_per_share: e.target.value }))
+                            }
                             className="mt-1 w-full border rounded px-3 py-2"
                             placeholder="e.g. 49.00"
                           />
@@ -3245,7 +3343,9 @@ function ManageRenewalsCard() {
                         <textarea
                           rows={2}
                           value={editForm.notes}
-                          onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
+                          onChange={(e) =>
+                            setEditForm((p) => ({ ...p, notes: e.target.value }))
+                          }
                           className="mt-1 w-full border rounded px-3 py-2"
                         />
                       </label>
@@ -3275,7 +3375,6 @@ function ManageRenewalsCard() {
     </section>
   );
 }
-
 
 
 /* ===========================

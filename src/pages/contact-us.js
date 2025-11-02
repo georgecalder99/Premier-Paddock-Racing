@@ -65,12 +65,6 @@ export default function ContactUs() {
         {/* HERO */}
         <section className="relative overflow-hidden">
           <div className="absolute inset-0">
-            <img
-              src="/hero.jpg"
-              alt=""
-              aria-hidden="true"
-              className="w-full h-full object-cover"
-            />
             <div className="absolute inset-0 bg-green-900/60" />
             <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent" />
           </div>

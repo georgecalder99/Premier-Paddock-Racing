@@ -5,14 +5,15 @@ import { createClient } from "@supabase/supabase-js";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM_EMAIL =
-  process.env.FROM_EMAIL || "Premier Paddock <no-reply@premierpaddockracing.co.uk>";
+  process.env.FROM_EMAIL ||
+  "Premier Paddock <no-reply@premierpaddockracing.co.uk>";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Use provided name → Supabase (full_name/name) → raw email as fallback
+// Try to get a nice name for the recipient
 async function resolveDisplayName(to, providedName) {
   if (providedName && String(providedName).trim()) {
     return String(providedName).trim();
@@ -22,7 +23,8 @@ async function resolveDisplayName(to, providedName) {
 
   try {
     if (email) {
-      const { data, error } = await supabaseAdmin.auth.admin.getUserByEmail(email);
+      const { data, error } =
+        await supabaseAdmin.auth.admin.getUserByEmail(email);
       if (!error && data?.user?.user_metadata) {
         const meta = data.user.user_metadata;
         const full = (meta.full_name || meta.name || "").trim();
@@ -31,46 +33,119 @@ async function resolveDisplayName(to, providedName) {
     }
   } catch (e) {
     if (process.env.NODE_ENV !== "production") {
-      console.log("[send-renewal-email] name lookup error:", e?.message || e);
+      console.log(
+        "[send-renewal-email] name lookup error:",
+        e?.message || e
+      );
     }
   }
 
-  // Fallback: show the full email exactly as-is
-  return email;
+  return email; // fallback
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
 
   try {
     const {
+      // existing fields
       to,
       horseName,
-      renewalPeriod,
+      renewalPeriod, // old label – we will keep for backwards compat
       amount,
-      name,       // optional
-      buyerName,  // optional
+
+      // new / better fields
+      renewCycleId,        // we'll fetch term_end_date from DB if this is present
+      termEndDate,         // you can pass it directly instead of renewCycleId
+      sharesRenewed,       // number of shares in THIS renewal
+      pricePerShare,       // in GBP, e.g. 49.0
+      lineTotal,           // optional – if client already calculated
+      name,                // optional
+      buyerName,           // optional
     } = req.body || {};
 
     if (!to || !horseName) {
-      return res.status(400).json({ error: "Missing required fields: to, horseName" });
+      return res
+        .status(400)
+        .json({ error: "Missing required fields: to, horseName" });
     }
 
+    // 1) Who to address
     const displayName = await resolveDisplayName(to, name || buyerName);
+
+    // 2) Work out the real "term ends" date
+    let finalTermEnd = null;
+    let finalTermLabel = null;
+
+    // a) if the client already sent termEndDate, trust it
+    if (termEndDate) {
+      finalTermEnd = termEndDate;
+    }
+    // b) otherwise if we have a cycle id, fetch it
+    else if (renewCycleId) {
+      const { data: cycle, error: cycleErr } = await supabaseAdmin
+        .from("renew_cycles")
+        .select(
+          "term_end_date, term_label, renew_period_end"
+        )
+        .eq("id", renewCycleId)
+        .maybeSingle();
+
+      if (!cycleErr && cycle) {
+        finalTermEnd =
+          cycle.term_end_date || cycle.renew_period_end || null;
+        finalTermLabel = cycle.term_label || null;
+      }
+    }
+
+    // 3) work out the line totals / breakdown
+    // sharesRenewed -> number
+    const sharesN =
+      sharesRenewed != null ? Number(sharesRenewed) : null;
+    const priceN =
+      pricePerShare != null ? Number(pricePerShare) : null;
+
+    // we prefer the explicit lineTotal the client sends
+    let totalGBP = lineTotal != null ? Number(lineTotal) : null;
+
+    // if not sent, derive it from shares * price
+    if (totalGBP == null && sharesN != null && priceN != null) {
+      totalGBP = sharesN * priceN;
+    }
+
+    // final amount (for backwards compat)
+    // if they still send `amount`, keep it,
+    // otherwise use the derived total
+    const finalAmount = amount != null ? amount : totalGBP;
+
     const subject = `Your ${horseName} renewal confirmation`;
 
+    // 4) Build HTML + text with NEW fields
     const html = renewalEmailHTML({
       name: displayName,
       horseName,
+      // old field, keep for templates that still expect it:
       renewalPeriod,
-      amount,
+      // new field:
+      termEnds: finalTermEnd,
+      termLabel: finalTermLabel,
+      amount: finalAmount,
+      sharesRenewed: sharesN,
+      pricePerShare: priceN,
+      lineTotal: totalGBP,
     });
 
     const text = renewalEmailText({
       name: displayName,
       horseName,
       renewalPeriod,
-      amount,
+      termEnds: finalTermEnd,
+      termLabel: finalTermLabel,
+      amount: finalAmount,
+      sharesRenewed: sharesN,
+      pricePerShare: priceN,
+      lineTotal: totalGBP,
     });
 
     const { data, error } = await resend.emails.send({

@@ -99,38 +99,170 @@ export function purchaseEmailText({ name, horseName, qty, pricePerShare, total }
   ].join("\n");
 }
 
-/* ---------------- Renewal ---------------- */
-
-export function renewalEmailHTML({ name, horseName, renewalPeriod, amount }) {
+/* ---------------- Renewal (upgraded) ---------------- */
+/**
+ * We now accept extra fields:
+ * - termEnds: ISO string (the real “term end date”)
+ * - termLabel: optional human label e.g. "2025 Season"
+ * - sharesRenewed: number of shares renewed
+ * - pricePerShare: GBP number
+ * - lineTotal: final amount for this line
+ *
+ * We still accept the old fields:
+ * - renewalPeriod
+ * - amount
+ */
+export function renewalEmailHTML({
+  name,
+  horseName,
+  renewalPeriod,
+  amount,
+  termEnds,
+  termLabel,
+  sharesRenewed,
+  pricePerShare,
+  lineTotal,
+}) {
   const title = `Renewal confirmed — ${horseName}`;
   const display = friendlyName(name);
+
+  // pick the best total we have
+  const finalTotal =
+    lineTotal != null
+      ? Number(lineTotal || 0)
+      : amount != null
+      ? Number(amount || 0)
+      : null;
+
+  // helper for date
+  const termEndsHtml = termEnds
+    ? `<tr><td style="padding:8px 0;color:#6b7280;">Term ends</td><td style="padding:8px 0;text-align:right;"><strong>${formatDateUK(
+        termEnds
+      )}</strong></td></tr>`
+    : "";
+
+  // only render breakdown rows if we actually got values
+  const sharesRow =
+    sharesRenewed != null
+      ? `<tr><td style="padding:8px 0;color:#6b7280;">Shares renewed</td><td style="padding:8px 0;text-align:right;"><strong>${Number(
+          sharesRenewed
+        ).toLocaleString()}</strong></td></tr>`
+      : "";
+
+  const ppsRow =
+    pricePerShare != null
+      ? `<tr><td style="padding:8px 0;color:#6b7280;">Price per share</td><td style="padding:8px 0;text-align:right;"><strong>£${Number(
+          pricePerShare || 0
+        ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td></tr>`
+      : "";
+
+  const totalRow =
+    finalTotal != null
+      ? `<tr><td style="padding:8px 0;color:#6b7280;">Total paid</td><td style="padding:8px 0;text-align:right;"><strong>£${finalTotal.toLocaleString(
+          undefined,
+          { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+        )}</strong></td></tr>`
+      : "";
+
+  // if we didn’t get termEnds, fall back to your old “renewal period”
+  const fallbackPeriod =
+    !termEnds && renewalPeriod
+      ? `<tr><td style="padding:8px 0;color:#6b7280;">Renewal period</td><td style="padding:8px 0;text-align:right;"><strong>${escapeHtml(
+          renewalPeriod
+        )}</strong></td></tr>`
+      : "";
+
+  // if we got a term label, show it
+  const termLabelRow = termLabel
+    ? `<tr><td style="padding:8px 0;color:#6b7280;">Term</td><td style="padding:8px 0;text-align:right;"><strong>${escapeHtml(
+        termLabel
+      )}</strong></td></tr>`
+    : "";
+
   const bodyHtml = `
     <p style="margin:0 0 12px;font-size:16px;">Dear ${escapeHtml(display)},</p>
-    <p style="margin:0 0 16px;font-size:16px;">Thank you for renewing your ownership in <strong>${escapeHtml(horseName)}</strong>.</p>
+    <p style="margin:0 0 16px;font-size:16px;">Thank you for renewing your ownership in <strong>${escapeHtml(
+      horseName
+    )}</strong>.</p>
     <table role="presentation" cellspacing="0" cellpadding="0" style="margin:16px 0;border-collapse:collapse;width:100%;">
-      <tr><td style="padding:8px 0;color:#6b7280;">Renewal period</td><td style="padding:8px 0;text-align:right;"><strong>${escapeHtml(renewalPeriod || "")}</strong></td></tr>
-      <tr><td style="padding:8px 0;color:#6b7280;">Amount</td><td style="padding:8px 0;text-align:right;"><strong>£${Number(amount || 0).toLocaleString()}</strong></td></tr>
+      ${termEndsHtml}
+      ${termLabelRow}
+      ${fallbackPeriod}
+      ${sharesRow}
+      ${ppsRow}
+      ${totalRow}
     </table>
-    <p style="margin:0 0 16px;font-size:16px;">We’re excited to have you on board for the next chapter.</p>
-    <p style="margin:20px 0 0;font-size:16px;">Warm regards,<br/>The ${escapeHtml(siteName)} Team</p>`;
+    <p style="margin:0 0 16px;font-size:16px;">You can view this renewal in your paddock.</p>
+    <p style="margin:20px 0 0;font-size:16px;">Warm regards,<br/>The ${escapeHtml(siteName)} Team</p>
+  `;
+
   return shell({ title, bodyHtml });
 }
 
-export function renewalEmailText({ name, horseName, renewalPeriod, amount }) {
+export function renewalEmailText({
+  name,
+  horseName,
+  renewalPeriod,
+  amount,
+  termEnds,
+  termLabel,
+  sharesRenewed,
+  pricePerShare,
+  lineTotal,
+}) {
   const display = friendlyName(name);
-  return [
-    `Dear ${display},`,
-    ``,
-    `Thank you for renewing your ownership in ${horseName}.`,
-    ``,
-    `Renewal period: ${renewalPeriod || ""}`,
-    `Amount: £${Number(amount || 0).toLocaleString()}`,
-    ``,
-    `We’re excited to have you on board for the next chapter.`,
-    ``,
-    `Warm regards,`,
-    `The ${siteName} Team`,
-  ].join("\n");
+  const lines = [];
+
+  lines.push(`Dear ${display},`);
+  lines.push("");
+  lines.push(`Thank you for renewing your ownership in ${horseName}.`);
+  lines.push("");
+
+  if (termEnds) {
+    lines.push(`Term ends: ${formatDateUK(termEnds)}`);
+  } else if (renewalPeriod) {
+    lines.push(`Renewal period: ${renewalPeriod}`);
+  }
+
+  if (termLabel) {
+    lines.push(`Term: ${termLabel}`);
+  }
+
+  if (sharesRenewed != null) {
+    lines.push(`Shares renewed: ${sharesRenewed}`);
+  }
+  if (pricePerShare != null) {
+    lines.push(
+      `Price per share: £${Number(pricePerShare || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`
+    );
+  }
+
+  const finalTotal =
+    lineTotal != null
+      ? Number(lineTotal || 0)
+      : amount != null
+      ? Number(amount || 0)
+      : null;
+
+  if (finalTotal != null) {
+    lines.push(
+      `Total paid: £${finalTotal.toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`
+    );
+  }
+
+  lines.push("");
+  lines.push("You can view this renewal in your paddock.");
+  lines.push("");
+  lines.push("Warm regards,");
+  lines.push(`The ${siteName} Team`);
+
+  return lines.join("\n");
 }
 
 /* ---------------- Utils ---------------- */
@@ -142,4 +274,16 @@ function escapeHtml(s = "") {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function formatDateUK(v) {
+  try {
+    return new Date(v).toLocaleDateString("en-GB", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return v;
+  }
 }
