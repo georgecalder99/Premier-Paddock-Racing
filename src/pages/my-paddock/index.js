@@ -1,35 +1,44 @@
 // src/pages/my-paddock/index.js
 
+/* eslint-disable @next/next/no-img-element */
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import Head from "next/head";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
+import cartApi from "../../lib/cartClient";
 import { Auth } from "@supabase/auth-ui-react";
 import { ThemeSupa } from "@supabase/auth-ui-shared";
-import cartApi from "../../lib/cartClient";
-import { useRouter } from "next/router";
 
-// Confetti must be client-only to avoid SSR window errors (used elsewhere on page)
+// Confetti must be client-only
 const Confetti = dynamic(() => import("react-confetti"), { ssr: false });
 
-/* ============= Small util (kept because other sections use it) ============= */
+/* =============================
+   small util
+============================= */
 function useWindowSize() {
-  const isClient = typeof window !== "undefined";
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
-    if (!isClient) return;
+    if (typeof window === "undefined") return;
     function onResize() {
       setSize({ width: window.innerWidth, height: window.innerHeight });
     }
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [isClient]);
+  }, []);
   return size;
 }
 
-/* ============= Admin helper (unchanged) ============= */
+/* =============================
+   admin helper
+============================= */
 const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
   .split(",")
   .map((e) => e.trim().toLowerCase())
@@ -40,7 +49,9 @@ function useIsAdmin(session) {
   return Boolean(email && ADMIN_EMAILS.includes(email));
 }
 
-/* ============= Profile details card (single, hides on save) ============= */
+/* =============================
+   Profile card
+============================= */
 function ProfileDetailsCard({ session, onSaved }) {
   const [fullName, setFullName] = React.useState(
     session?.user?.user_metadata?.full_name ||
@@ -67,7 +78,6 @@ function ProfileDetailsCard({ session, onSaved }) {
       if (error) throw error;
 
       setMsg("✅ Saved");
-      // Let parent hide the card and update greeting immediately
       onSaved?.(clean);
     } catch (err) {
       setMsg("❌ " + (err?.message || "Could not save"));
@@ -87,9 +97,7 @@ function ProfileDetailsCard({ session, onSaved }) {
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             placeholder="e.g. George Calder"
-            className="mt-1 w-full border rounded px-3 py-2
-           bg-white text-gray-900 placeholder-gray-400 border-gray-300
-           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+            className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300"
           />
         </label>
         <button
@@ -104,6 +112,7 @@ function ProfileDetailsCard({ session, onSaved }) {
     </section>
   );
 }
+
 
 /* ============================================================================
    PAGE

@@ -150,7 +150,7 @@ function CostsExplainer() {
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-green-900">Clear pricing</h2>
             <p className="mt-3 text-gray-700">
-              Shares are typically around <strong>£60 per share</strong>. Each horse shows the total number
+              Shares are typically around <strong>£45 per share</strong>. Each horse shows the total number
               of shares available and live progress toward selling out. You will see the price before you buy — no surprises.
             </p>
 
