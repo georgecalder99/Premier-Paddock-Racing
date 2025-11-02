@@ -731,67 +731,102 @@ function MyResults({ userId }) {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data: results } = await supabase
+
+      // 1) user’s results
+      const { data: results, error: resErr } = await supabase
         .from("ballot_results")
         .select("ballot_id, result")
         .eq("user_id", userId);
 
-      const ids = Array.from(new Set((results || []).map((r) => r.ballot_id)));
-      if (ids.length === 0) {
+      if (resErr) {
+        console.error("[MyResults] results err:", resErr);
         setRows([]);
         setLoading(false);
         return;
       }
 
+      const ids = Array.from(new Set((results || []).map((r) => r.ballot_id)));
+      if (!ids.length) {
+        setRows([]);
+        setLoading(false);
+        return;
+      }
+
+      // 2) ballots for those ids
       const { data: ballots, error: ballotsErr } = await supabase
         .from("ballots")
         .select("id, title, type, event_date, cutoff_at, horse_id")
         .in("id", ids);
 
       if (ballotsErr) {
-        console.error(ballotsErr);
+        console.error("[MyResults] ballots err:", ballotsErr);
         setRows([]);
         setLoading(false);
         return;
       }
 
-      // map horse_id -> horse details
-      const horseIds = Array.from(new Set((ballots || []).map(b => b.horse_id))).filter(Boolean);
+      // 3) horses for those ballots
+      const horseIds = Array.from(
+        new Set((ballots || []).map((b) => b.horse_id))
+      ).filter(Boolean);
+
       let horseMap = {};
       if (horseIds.length) {
-        const { data: horses } = await supabase
+        const { data: horses, error: hErr } = await supabase
           .from("horses")
           .select("id, name, photo_url")
           .in("id", horseIds);
-        horseMap = Object.fromEntries((horses || []).map(h => [h.id, h]));
+
+        if (!hErr && horses) {
+          horseMap = Object.fromEntries(horses.map((h) => [h.id, h]));
+        }
       }
 
-      const byId = Object.fromEntries((ballots || []).map((b) => [b.id, b]));
+      const ballotById = Object.fromEntries(
+        (ballots || []).map((b) => [b.id, b])
+      );
+
       const merged = (results || [])
         .map((r) => {
-          const b = byId[r.ballot_id];
-          return b ? { ballot: b, result: r.result, horse: horseMap[b.horse_id] || null } : null;
+          const b = ballotById[r.ballot_id];
+          if (!b) return null;
+          return {
+            ballot: b,
+            result: r.result,
+            horse: b.horse_id ? horseMap[b.horse_id] || null : null,
+          };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        // newest / most recent draws first
+        .sort(
+          (a, b) =>
+            new Date(b.ballot.cutoff_at).getTime() -
+            new Date(a.ballot.cutoff_at).getTime()
+        );
 
-      setRows(merged.sort((a, b) => new Date(b.ballot.cutoff_at) - new Date(a.ballot.cutoff_at)));
+      setRows(merged);
       setLoading(false);
     }
+
     load();
   }, [userId]);
 
   function toggleReveal(bid) {
-    setRevealed((p) => ({ ...p, [bid]: !p[bid] }));
+    setRevealed((prev) => ({ ...prev, [bid]: !prev[bid] }));
   }
 
   if (loading) return <p>Loading results…</p>;
-  if (rows.length === 0)
+
+  if (!rows.length) {
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No results yet</h3>
-        <p className="text-sm text-gray-600 mt-1">When your ballots are drawn, results will appear here.</p>
+        <p className="text-sm text-gray-600 mt-1">
+          When your ballots are drawn, results will appear here.
+        </p>
       </div>
     );
+  }
 
   return (
     <ul className="space-y-3">
@@ -803,36 +838,48 @@ function MyResults({ userId }) {
         return (
           <li key={b.id} className="rounded-lg border bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
+              {/* LEFT: horse image + text */}
               <div className="flex gap-3">
-                {horse?.photo_url && (
+                {horse?.photo_url ? (
+                  <img
+                    src={horse.photo_url}
+                    alt={horse.name || "Horse"}
+                    className="w-14 h-14 rounded object-cover"
+                  />
+                ) : null}
+
                 <div>
-                  {/* 🐴 Horse name at top (same style as Voting) */}
-                  {horse?.name && (
-                    <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horse.name}</h4>
-                  )}
+                  {horse?.name ? (
+                    <h4 className="text-sm text-green-700 font-semibold mb-1">
+                      Horse: {horse.name}
+                    </h4>
+                  ) : null}
 
                   <div className="font-medium">
                     {b.title}{" "}
                     <span className="text-xs text-gray-500">
-                      ({typeLabel}) {b.event_date ? `• ${new Date(b.event_date).toLocaleDateString()}` : ""}
+                      ({typeLabel}){" "}
+                      {b.event_date
+                        ? `• ${new Date(b.event_date).toLocaleDateString()}`
+                        : ""}
                     </span>
                   </div>
                   <div className="text-xs text-gray-600">
-                    {/* remove duplicate horse label here; keep drawn + date */}
                     Drawn • {new Date(b.cutoff_at).toLocaleString()}
                   </div>
                 </div>
               </div>
 
+              {/* RIGHT: actions */}
               <div className="flex items-center gap-2">
-                {b.horse_id && (
+                {b.horse_id ? (
                   <Link
                     href={`/horses/${b.horse_id}`}
                     className="px-3 py-1 border rounded text-sm text-green-900 hover:bg-green-50"
                   >
                     View horse
                   </Link>
-                )}
+                ) : null}
                 <button
                   onClick={() => toggleReveal(b.id)}
                   className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
@@ -842,25 +889,30 @@ function MyResults({ userId }) {
               </div>
             </div>
 
-            {isRevealed && (
+            {/* REVEALED RESULT */}
+            {isRevealed ? (
               <div className="mt-3 relative">
                 {isWinner ? (
                   <>
-                    <Confetti width={width} height={height} recycle={false} numberOfPieces={250} />
+                    <Confetti
+                      width={width}
+                      height={height}
+                      recycle={false}
+                      numberOfPieces={250}
+                    />
                     <WinCard />
                   </>
                 ) : (
                   <LoseCard />
                 )}
               </div>
-            )}
+            ) : null}
           </li>
         );
       })}
     </ul>
   );
 }
-
 /* ===========================
    VOTING SECTION
    Sub-tabs: open | results
