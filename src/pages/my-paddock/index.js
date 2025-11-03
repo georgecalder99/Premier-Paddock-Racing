@@ -52,33 +52,44 @@ function useIsAdmin(session) {
 /* =============================
    Profile card
 ============================= */
+
 function ProfileDetailsCard({ session, onSaved }) {
-  const [fullName, setFullName] = React.useState(
+  const [fullName, setFullName] = useState(
     session?.user?.user_metadata?.full_name ||
       session?.user?.user_metadata?.name ||
       ""
   );
-  const [saving, setSaving] = React.useState(false);
-  const [msg, setMsg] = React.useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  // If the session changes (e.g. user logs in/out), keep the field in sync
+  useEffect(() => {
+    setFullName(
+      session?.user?.user_metadata?.full_name ||
+        session?.user?.user_metadata?.name ||
+        ""
+    );
+  }, [session]);
 
   async function saveName(e) {
     e.preventDefault();
-    setSaving(true);
-    setMsg("");
+    const clean = (fullName || "").trim();
+
+    if (!clean) {
+      setMsg("❌ Please enter your full name");
+      return;
+    }
+
     try {
-      const clean = (fullName || "").trim();
-      if (!clean) {
-        setMsg("❌ Please enter your full name");
-        setSaving(false);
-        return;
-      }
+      setSaving(true);
+      setMsg("");
       const { error } = await supabase.auth.updateUser({
         data: { full_name: clean },
       });
       if (error) throw error;
 
       setMsg("✅ Saved");
-      onSaved?.(clean);
+      onSaved?.(clean); // let parent update greeting/hide card if needed
     } catch (err) {
       setMsg("❌ " + (err?.message || "Could not save"));
     } finally {
@@ -87,30 +98,32 @@ function ProfileDetailsCard({ session, onSaved }) {
   }
 
   return (
-  <section className="bg-white rounded-xl border p-5 shadow-sm">
-    <h3 className="text-lg font-semibold text-green-900">Your details</h3>
-    <form className="mt-3 flex gap-3 items-end">
-      <label className="flex-1 text-sm">
-        Full name
-        <input
-          type="text"
-          value="e.g. John Smith"
-          readOnly
-          className="mt-1 w-full border rounded px-3 py-2 
-                     bg-white text-gray-900 border-gray-300
-                     cursor-not-allowed select-none"
-        />
-      </label>
-      <button
-        type="button"
-        disabled
-        className="px-4 py-2 bg-gray-400 text-white rounded opacity-60 cursor-not-allowed"
-      >
-        Save
-      </button>
-    </form>
-  </section>
-);
+    <section className="bg-white rounded-xl border p-5 shadow-sm">
+      <h3 className="text-lg font-semibold text-green-900">Your details</h3>
+      <form onSubmit={saveName} className="mt-3 flex gap-3 items-end">
+        <label className="flex-1 text-sm">
+          Full name
+          <input
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="e.g. John Smith"
+            className="mt-1 w-full border rounded px-3 py-2
+                       bg-white text-gray-900 placeholder-gray-400 border-gray-300
+                       dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-60"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </form>
+      {msg ? <p className="text-sm mt-2">{msg}</p> : null}
+    </section>
+  );
 }
 
 
