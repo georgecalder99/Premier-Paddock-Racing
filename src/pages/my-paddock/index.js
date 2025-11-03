@@ -87,30 +87,30 @@ function ProfileDetailsCard({ session, onSaved }) {
   }
 
   return (
-    <section className="bg-white rounded-xl border p-5 shadow-sm">
-      <h3 className="text-lg font-semibold text-green-900">Your details</h3>
-      <form onSubmit={saveName} className="mt-3 flex gap-3 items-end">
-        <label className="flex-1 text-sm">
-          Full name
-          <input
-            type="text"
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            placeholder="e.g. George Calder"
-            className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-60"
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </form>
-      {msg ? <p className="text-sm mt-2">{msg}</p> : null}
-    </section>
-  );
+  <section className="bg-white rounded-xl border p-5 shadow-sm">
+    <h3 className="text-lg font-semibold text-green-900">Your details</h3>
+    <form className="mt-3 flex gap-3 items-end">
+      <label className="flex-1 text-sm">
+        Full name
+        <input
+          type="text"
+          value="e.g. John Smith"
+          readOnly
+          className="mt-1 w-full border rounded px-3 py-2 
+                     bg-white text-gray-900 border-gray-300
+                     cursor-not-allowed select-none"
+        />
+      </label>
+      <button
+        type="button"
+        disabled
+        className="px-4 py-2 bg-gray-400 text-white rounded opacity-60 cursor-not-allowed"
+      >
+        Save
+      </button>
+    </form>
+  </section>
+);
 }
 
 
