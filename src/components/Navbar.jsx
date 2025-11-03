@@ -6,10 +6,11 @@ import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 import { getOrCreateCart } from "../lib/cartClient";
 
-export default function Navbar({ session, sessionReady }) {
+export default function Navbar() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
 
+  const [session, setSession] = useState(null);
   const [cartId, setCartId] = useState(null);
   const [basketCount, setBasketCount] = useState(0);
 
@@ -24,10 +25,19 @@ export default function Navbar({ session, sessionReady }) {
 
   const isActive = (path) => router.pathname === path;
 
-  // ensure a cart for logged-in user + initial DISTINCT HORSE count
+  // --- auth session
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data?.session ?? null);
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
+  // --- ensure a cart for logged-in user + initial DISTINCT HORSE count
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       if (!session?.user?.id) {
         setCartId(null);
@@ -35,11 +45,12 @@ export default function Navbar({ session, sessionReady }) {
         return;
       }
       try {
-        const cart = await getOrCreateCart();
+        const cart = await getOrCreateCart(); // must return an object with `id`
         if (cancelled) return;
         setCartId(cart?.id || null);
 
         if (cart?.id) {
+          // Only fetch the horse_id; count DISTINCT horses
           const { data: items, error } = await supabase
             .from("cart_items")
             .select("horse_id")
@@ -59,11 +70,10 @@ export default function Navbar({ session, sessionReady }) {
         }
       }
     })();
-
     return () => { cancelled = true; };
   }, [session?.user?.id]);
 
-  // realtime DISTINCT HORSE count updates for this cart
+  // --- realtime DISTINCT HORSE count updates for this cart
   useEffect(() => {
     if (!cartId) return;
 
@@ -87,6 +97,7 @@ export default function Navbar({ session, sessionReady }) {
     return () => supabase.removeChannel(channel);
   }, [cartId]);
 
+  // SVG basket icon
   const BasketIcon = useMemo(() => (
     <svg
       aria-hidden="true"
@@ -142,20 +153,13 @@ export default function Navbar({ session, sessionReady }) {
               </Link>
             ))}
 
-            {/* My Paddock (use sessionReady to avoid flicker) */}
-            {!sessionReady ? (
-              <span
-                aria-hidden
-                className="inline-block h-9 w-28 rounded-lg bg-gray-200 animate-pulse"
-              />
-            ) : (
-              <Link
-                href="/my-paddock"
-                className="px-4 py-2 border-2 border-yellow-400 text-yellow-500 font-semibold rounded-lg hover:bg-yellow-400 hover:text-green-900 transition"
-              >
-                My Paddock
-              </Link>
-            )}
+            {/* My Paddock */}
+            <Link
+              href="/my-paddock"
+              className="px-4 py-2 border-2 border-yellow-400 text-yellow-500 font-semibold rounded-lg hover:bg-yellow-400 hover:text-green-900 transition"
+            >
+              My Paddock
+            </Link>
 
             {/* Basket button */}
             <Link
@@ -167,7 +171,9 @@ export default function Navbar({ session, sessionReady }) {
               {BasketIcon}
               <span>Basket</span>
               {basketCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 rounded-full bg-amber-600 text-white text-[11px] leading-5 text-center px-1">
+                <span
+                  className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 rounded-full bg-amber-600 text-white text-[11px] leading-5 text-center px-1"
+                >
                   {basketCount}
                 </span>
               )}
@@ -210,20 +216,13 @@ export default function Navbar({ session, sessionReady }) {
               ))}
 
               {/* My Paddock (mobile) */}
-              {!sessionReady ? (
-                <span
-                  aria-hidden
-                  className="mt-2 mx-3 inline-block h-10 rounded-lg bg-gray-200 animate-pulse"
-                />
-              ) : (
-                <Link
-                  href="/my-paddock"
-                  className="mt-2 mx-3 px-4 py-2 border-2 border-yellow-400 text-yellow-500 font-semibold rounded-lg text-center hover:bg-yellow-400 hover:text-green-900 transition"
-                  onClick={() => setOpen(false)}
-                >
-                  My Paddock
-                </Link>
-              )}
+              <Link
+                href="/my-paddock"
+                className="mt-2 mx-3 px-4 py-2 border-2 border-yellow-400 text-yellow-500 font-semibold rounded-lg text-center hover:bg-yellow-400 hover:text-green-900 transition"
+                onClick={() => setOpen(false)}
+              >
+                My Paddock
+              </Link>
 
               {/* Basket (mobile) */}
               <Link
