@@ -3704,6 +3704,42 @@ function ActivePromotionsList() {
     try { return x ? new Date(x).toLocaleString() : "—"; } catch { return "—"; }
   };
 
+  // Secure CSV download: uses Supabase access token (works in prod w/ SameSite issues)
+  async function downloadCsv(promotionId) {
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) {
+        alert("Please sign in to download the CSV.");
+        window.location.href = "/my-paddock";
+        return;
+      }
+
+      const res = await fetch(
+        `/api/promotions/export?promotion_id=${encodeURIComponent(promotionId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Export failed (${res.status}): ${text || res.statusText}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `promotion-${promotionId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("[downloadCsv] error", e);
+      alert(e?.message || "Could not download CSV. Please try again.");
+    }
+  }
+
   // normalize a row coming from Active RPC
   function normalizeActiveRow(r) {
     return {
@@ -3898,7 +3934,7 @@ function ActivePromotionsList() {
                   <div className="font-medium">
                     {r.horse_name ?? "Horse"}{" "}
                     <span className="text-xs text-gray-500">
-                    · Min {r.min_shares_required} or more shares · Quota {r.quota}
+                      · Min {r.min_shares_required} or more shares · Quota {r.quota}
                     </span>
                   </div>
                   <div className="text-sm text-gray-700">
@@ -3924,13 +3960,16 @@ function ActivePromotionsList() {
                   >
                     View horse →
                   </Link>
-                  <a
-                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(r._id)}`}
+
+                  {/* CSV: use client fetch + Authorization header */}
+                  <button
+                    onClick={() => downloadCsv(r._id)}
                     className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
                     title="Download qualifying emails (CSV)"
                   >
                     CSV
-                  </a>
+                  </button>
+
                   <button
                     onClick={() => disablePromotion(r._id)}
                     className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50"
@@ -3968,7 +4007,7 @@ function ActivePromotionsList() {
                   <div className="font-medium">
                     {p.horse_name}{" "}
                     <span className="text-xs text-gray-500">
-                  · Min {p.min_shares_required ?? "—"} or more shares · Quota {p.quota ?? "—"}
+                      · Min {p.min_shares_required ?? "—"} or more shares · Quota {p.quota ?? "—"}
                     </span>
                   </div>
                   <div className="text-sm text-gray-700">
@@ -3988,13 +4027,16 @@ function ActivePromotionsList() {
                   >
                     View horse →
                   </Link>
-                  <a
-                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(p._id)}`}
+
+                  {/* CSV: use client fetch + Authorization header */}
+                  <button
+                    onClick={() => downloadCsv(p._id)}
                     className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
                     title="Download the qualifying emails for this finished promo"
                   >
                     CSV
-                  </a>
+                  </button>
+
                   <button
                     onClick={() => deletePromotion(p._id)}
                     className="px-3 py-1.5 rounded text-sm text-white bg-red-600 hover:bg-red-700"

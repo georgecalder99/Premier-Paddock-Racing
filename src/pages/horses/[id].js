@@ -4,6 +4,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { supabase } from "../../lib/supabaseClient";
+import { getOrCreateCart, addShareToCart } from "../../lib/cartClient";
 
 const fmtGBP = (n) => `£${Number(n || 0).toLocaleString()}`;
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -53,12 +54,7 @@ function parseJSONSafely(s) {
 
 // Try to coerce horse.about_blocks into an array of blocks regardless of shape
 function extractAboutBlocks(horse, debug) {
-  const candidates = [
-    horse?.about_blocks,
-    horse?.aboutBlocks,
-    horse?.about,
-    horse?.blocks,
-  ];
+  const candidates = [horse?.about_blocks, horse?.aboutBlocks, horse?.about, horse?.blocks];
 
   for (const v of candidates) {
     if (v == null) continue;
@@ -77,7 +73,6 @@ function extractAboutBlocks(horse, debug) {
         return parsed;
       }
       if (parsed && typeof parsed === "object") {
-        // Sometimes stored as { blocks: [...] } or { items: [...] }
         const arr =
           Array.isArray(parsed.blocks) ? parsed.blocks :
           Array.isArray(parsed.items) ? parsed.items :
@@ -101,7 +96,6 @@ function extractAboutBlocks(horse, debug) {
         if (debug) console.log("[about_blocks] object with array in known key:", arr);
         return arr;
       }
-      // Sometimes the object is actually a single block; wrap it.
       const possibleSingleBlockKeys = ["type", "blockType", "component", "text", "content", "paragraph", "body"];
       if (possibleSingleBlockKeys.some((k) => v[k] != null)) {
         if (debug) console.log("[about_blocks] single block object, wrapping as array:", v);
@@ -454,85 +448,53 @@ export default function HorseDetailPage() {
     return { total, sold, remaining, pct };
   }, [horse, soldTotal]);
 
-  async function buyShares() {
-    if (!session) {
-      alert("Please log in first to buy shares.");
-      window.location.href = "/my-paddock";
-      return;
-    }
-    const n = Math.min(100, Math.max(1, Number(qty || 1)));
-
-    const { data: liveHorse, error: liveErr } = await supabase
-      .from("horses")
-      .select("id,total_shares, name, share_price")
-      .eq("id", horseId)
-      .single();
-    if (liveErr || !liveHorse) { alert("Could not verify availability. Try again."); return; }
-
-    const { data: ownsOne } = await supabase
-      .from("ownerships")
-      .select("horse_id, shares")
-      .eq("horse_id", horseId);
-    const soldLive = (ownsOne || []).reduce((s, o) => s + (o.shares || 0), 0);
-    const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
-    if (remainingLive <= 0) { alert("Sorry, this horse is sold out."); return; }
-    if (n > remainingLive) { alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`); return; }
-
-    const userId = session.user.id;
-    const { data: existing, error: checkError } = await supabase
-      .from("ownerships")
-      .select("id, shares")
-      .eq("user_id", userId)
-      .eq("horse_id", horseId)
-      .maybeSingle();
-    if (checkError && checkError.code !== "PGRST116") {
-      console.error("Ownership check error:", checkError);
-      alert("Something went wrong. Try again.");
-      return;
-    }
-
-    if (existing) {
-      const { error } = await supabase
-        .from("ownerships")
-        .update({ shares: (existing.shares || 0) + n })
-        .eq("id", existing.id);
-      if (error) { alert("Could not update your shares."); return; }
-    } else {
-      const { error } = await supabase.from("ownerships").insert({ user_id: userId, horse_id: horseId, shares: n });
-      if (error) { alert("Could not add your shares."); return; }
-    }
-
+  // ---------- Add to basket (detail page) ----------
+  async function addToBasket() {
     try {
-      const { error: purchaseErr } = await supabase
-        .from("purchases")
-        .insert({ user_id: userId, horse_id: horseId, qty: n, metadata: { source: "detail_buy" } });
-      if (purchaseErr) console.error("[purchase log] insert failed:", purchaseErr);
-    } catch (e) {
-      console.error("[purchase log] unexpected:", e);
-    }
-
-    try {
-      const to = session.user?.email || "";
-      if (to) {
-        const pricePerShare = Number(liveHorse?.share_price ?? 0);
-        const total = pricePerShare * n;
-        await fetch("/api/send-purchase-email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to,
-            horseName: liveHorse?.name || "Horse",
-            qty: n,
-            pricePerShare,
-            total,
-          }),
-        });
+      // Ensure login for RLS
+      const { data: sess } = await supabase.auth.getSession();
+      if (!sess?.session?.user?.id) {
+        alert("Please log in first to use your basket.");
+        window.location.href = "/my-paddock";
+        return;
       }
-    } catch (e) {
-      console.error("[purchase email] failed:", e);
-    }
 
-    window.location.href = `/purchase/success?horse=${encodeURIComponent(horseId)}&qty=${encodeURIComponent(n)}`;
+      // Clamp qty (1..100)
+      const n = Math.min(100, Math.max(1, Number(qty || 1)));
+
+      // Optional: live remaining guard so we don’t add beyond remaining
+      const { data: liveHorse, error: liveErr } = await supabase
+        .from("horses")
+        .select("id,total_shares,name")
+        .eq("id", horseId)
+        .single();
+      if (liveErr || !liveHorse) {
+        alert("Could not verify availability. Please try again.");
+        return;
+      }
+      const { data: ownsAll } = await supabase
+        .from("ownerships")
+        .select("shares")
+        .eq("horse_id", horseId);
+      const soldLive = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
+      const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
+      if (remainingLive <= 0) {
+        alert("Sorry, this horse is sold out.");
+        return;
+      }
+      if (n > remainingLive) {
+        alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`);
+        return;
+      }
+
+      // Cart operations
+      const cart = await getOrCreateCart();
+      await addShareToCart(cart.id, horseId, n);
+      window.location.href = "/cart";
+    } catch (e) {
+      console.error("[addToBasket] failed:", e);
+      alert(e?.message || "Sorry, we couldn't add that to your basket. Please try again.");
+    }
   }
 
   if (loading) {
@@ -662,7 +624,7 @@ export default function HorseDetailPage() {
                 yourShares={yourShares}
                 qty={qty}
                 setQty={setQty}
-                buyShares={buyShares}
+                addToBasket={addToBasket}
                 promo={promo}
               />
             </div>
@@ -677,8 +639,8 @@ export default function HorseDetailPage() {
   );
 }
 
-// ---------- Purchase Card (unchanged) ----------
-function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buyShares, promo }) {
+// ---------- Purchase Card (Add to basket) ----------
+function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, addToBasket, promo }) {
   const soldOut = derived.remaining <= 0;
   return (
     <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -736,17 +698,20 @@ function PurchaseCard({ horse, derived, session, yourShares, qty, setQty, buySha
         </label>
 
         {!session ? (
-          <button onClick={() => (window.location.href = "/my-paddock")} className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800">
-            Sign in to purchase
+          <button
+            onClick={() => (window.location.href = "/my-paddock")}
+            className="px-3 py-2 bg-green-700 text-white rounded text-sm hover:bg-green-800"
+          >
+            Sign in to add
           </button>
         ) : (
           <button
-            onClick={buyShares}
+            onClick={addToBasket}
             className="px-3 py-2 bg-amber-500 text-white rounded text-sm disabled:opacity-50"
             disabled={soldOut}
-            title={soldOut ? "Sold out" : "Buy shares"}
+            title={soldOut ? "Sold out" : "Add to basket"}
           >
-            {soldOut ? "Sold out" : "Buy shares"}
+            {soldOut ? "Sold out" : "Add to basket"}
           </button>
         )}
       </div>

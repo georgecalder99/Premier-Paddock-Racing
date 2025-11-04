@@ -5,6 +5,13 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import Image from "next/image";
 
+function ClientOnly({ children }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
+  if (!ready) return null; // or return <div style={{height: 1}} />
+  return children;
+}
+
 
 function ClientOnlyHero({ children }) {
   const [ready, setReady] = useState(false);
@@ -110,18 +117,18 @@ export default function Home() {
 }
 
 /* ===========================
-   HERO (matches your other pages)
+   HERO (stable, correct green)
 =========================== */
-function Hero({ isAdmin }) {
+function Hero({ isAdmin /*, loggedIn */ }) {
   return (
     <section className="relative overflow-hidden">
-      {/* exact same overlays as your other hero */}
+      {/* correct green overlays to match your other pages */}
       <div className="absolute inset-0">
         <div className="absolute inset-0 bg-green-900/60" />
         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-green-900/50 to-transparent" />
       </div>
 
-      {/* optional Admin button (kept) */}
+      {/* Admin button (optional; harmless to keep) */}
       {isAdmin && (
         <div className="absolute right-6 top-6 z-10">
           <Link
@@ -133,7 +140,7 @@ function Hero({ isAdmin }) {
         </div>
       )}
 
-      {/* content */}
+      {/* Foreground */}
       <div className="relative max-w-7xl mx-auto px-6 py-24 md:py-32 text-white text-center">
         <div className="max-w-3xl mx-auto">
           <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm">
@@ -149,6 +156,7 @@ function Hero({ isAdmin }) {
             transparency on costs and shares.
           </p>
 
+          {/* fixed, non-conditional CTAs (no hydration flash) */}
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
               href="/horses"
@@ -164,7 +172,6 @@ function Hero({ isAdmin }) {
               How it works
             </Link>
 
-            {/* fixed label to avoid hydration flash */}
             <Link
               href="/my-paddock"
               className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20"
@@ -184,7 +191,6 @@ function Hero({ isAdmin }) {
     </section>
   );
 }
-
 
 /* ===========================
    WELCOME TO THE CLUB
@@ -339,16 +345,7 @@ function FeaturedHorses() {
     if (!enabled || quota <= 0) return null;
 
     const claimed = Math.max(0, Math.min(quota, salesCount - startSales));
-    const left = Math.max(0, Math.min(quota, quota - claimed));
-    return {
-      label: horse?.promo_label || (startSales > 0 ? `Next ${quota} sales` : `First ${quota} sales`),
-      reward: horse?.promo_reward || "Special bonus",
-      quota,
-      startSales,
-      claimed,
-      left,
-      active: left > 0,
-    };
+  
   }
 
   function PromoChip({ promo }) {
