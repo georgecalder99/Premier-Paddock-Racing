@@ -1,58 +1,84 @@
 /* eslint-disable @next/next/no-img-element */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import cartApi from "../lib/cartClient";
 import { supabase } from "../lib/supabaseClient";
 
+/* ---------- helpers ---------- */
 const fmtGBP = (n) =>
   `£${Number(n || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 
+/* =========================================================================
+   Wrapper: handles auth only (no cart hooks here to keep hooks ordering safe)
+=========================================================================== */
 export default function CartPage() {
-      const [session, setSession] = useState(null);
+  const [session, setSession] = useState(null);
   const [checkedAuth, setCheckedAuth] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
       setSession(data?.session ?? null);
       setCheckedAuth(true);
     });
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
+      setSession(s);
+      setCheckedAuth(true);
+    });
+    return () => sub?.subscription?.unsubscribe?.();
   }, []);
 
+  // Avoid flicker while checking auth
   if (!checkedAuth) {
-    // wait until auth check completes (avoids flicker)
-    return (
-      <div className="min-h-screen flex items-center justify-center text-gray-500">
-        Loading...
-      </div>
-    );
-  }
-
-  if (!session) {
-    // 👇 not signed in → show empty basket instead of error
     return (
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
-          <Link href="/horses" className="text-green-800 hover:underline">
-            ← Continue shopping
-          </Link>
-        </div>
-
-        <div className="mt-8 rounded-md border p-6 text-center">
-          <p className="text-gray-700">Your basket is empty.</p>
-          <p className="mt-3">
-            <Link href="/horses" className="text-green-800 underline">
-              Browse horses →
-            </Link>
-          </p>
-        </div>
+        <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
+        <p className="mt-6 text-gray-600">Loading…</p>
       </main>
     );
   }
+
+  // Not signed in → show the empty basket UI (no error)
+  if (!session) {
+    return (
+      <>
+        <Head>
+          <title>Basket | Premier Paddock Racing</title>
+        </Head>
+        <main className="max-w-5xl mx-auto px-6 py-10">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
+            <Link href="/horses" className="text-green-800 hover:underline">
+              ← Continue shopping
+            </Link>
+          </div>
+
+          <div className="mt-8 rounded-md border p-6 text-center">
+            <p className="text-gray-700">Your basket is empty.</p>
+            <p className="mt-3">
+              <Link href="/horses" className="text-green-800 underline">
+                Browse horses →
+              </Link>
+            </p>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  // Signed in → render cart
+  return <CartInner />;
+}
+
+/* =========================================================================
+   Inner cart: all cart logic lives here (hooks are unconditional & ordered)
+=========================================================================== */
+function CartInner() {
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
   const [items, setItems] = useState([]);
@@ -71,30 +97,31 @@ export default function CartPage() {
 
   const [checkingOut, setCheckingOut] = useState(false);
 
-  // --- NEW: owned shares for capping renewals ---
+  // owned shares for renewal caps
   const [ownedByHorse, setOwnedByHorse] = useState({});
 
-  // Helper: best-effort “shares left” for a horse (for capping share purchases)
+  // Best-effort “shares left” for a horse (for share purchases)
   function getHorseAvailable(horse) {
     if (!horse) return 100;
-    // Try a few common field names; fall back gracefully.
     const candidates = [
       horse.shares_remaining,
       horse.sharesAvailable,
       horse.shares_available,
       horse.available_shares,
       horse.remaining_shares,
-      (horse.total_shares != null && horse.sold_shares != null)
+      horse.total_shares != null && horse.sold_shares != null
         ? Number(horse.total_shares) - Number(horse.sold_shares)
         : undefined,
-    ].map(Number).filter((v) => Number.isFinite(v) && v > 0);
+    ]
+      .map(Number)
+      .filter((v) => Number.isFinite(v) && v > 0);
 
     const best = candidates.length ? Math.floor(Math.max(...candidates)) : undefined;
-    return best != null ? Math.max(1, best) : 100; // never below 1; default 100
+    return best != null ? Math.max(1, best) : 100; // default 100, never below 1
   }
 
-  // Load owned shares for the horses currently in the cart (used for renewal caps)
-  async function loadOwnedSharesForCartItems(itemsList) {
+  // Load owned shares for the horses currently in the cart (for renewal caps)
+  const loadOwnedSharesForCartItems = useCallback(async (itemsList) => {
     try {
       const itemHorseIds = [
         ...new Set(
@@ -133,10 +160,10 @@ export default function CartPage() {
       console.error("[cart] ownerships load failed:", e);
       setOwnedByHorse({});
     }
-  }
+  }, []);
 
-  // ---------- load cart ----------
-  async function loadCart() {
+  // Load cart
+  const loadCart = useCallback(async () => {
     try {
       setErrMsg("");
       setLoading(true);
@@ -145,8 +172,6 @@ export default function CartPage() {
       setItems(items);
       setHorses(horses);
       setSubtotalCents(subtotalCents);
-
-      // NEW: also load owned shares for caps
       await loadOwnedSharesForCartItems(items);
     } catch (e) {
       console.error("[cart] load error:", e);
@@ -159,10 +184,10 @@ export default function CartPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [loadOwnedSharesForCartItems]);
 
-  // ---------- load wallet ----------
-  async function loadWallet() {
+  // Load wallet
+  const loadWallet = useCallback(async () => {
     try {
       setWalletLoading(true);
       const balanceCents = await cartApi.getWalletBalance();
@@ -173,25 +198,28 @@ export default function CartPage() {
     } finally {
       setWalletLoading(false);
     }
-  }
+  }, []);
 
+  // Initial loads
   useEffect(() => {
     loadCart();
     loadWallet();
-  }, []);
+  }, [loadCart, loadWallet]);
 
-  // Live updates for cart items
+  // Live updates
   useEffect(() => {
     const channel = supabase
       .channel("cart-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "cart_items" }, () => {
-        loadCart();
-      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "cart_items" },
+        () => loadCart()
+      )
       .subscribe();
     return () => supabase.removeChannel(channel);
-  }, []);
+  }, [loadCart]);
 
-  // Qty change with caps (renewals: owned; shares: availability)
+  // Qty change with caps
   async function onQtyChange(itemId, newQty) {
     try {
       const theItem = items.find((x) => x.id === itemId);
@@ -236,11 +264,9 @@ export default function CartPage() {
     }
   }
 
-  // ---- Wallet application logic ----
-  const maxWalletUsableCents = useMemo(
-    () => Math.min(walletCents, subtotalCents),
-    [walletCents, subtotalCents]
-  );
+  /* ---------- Wallet logic ---------- */
+  const maxWalletUsableCents = Math.min(walletCents, subtotalCents);
+  const totalCents = Math.max(0, subtotalCents - walletApplyCents);
 
   function parseGBPToCents(input) {
     const cleaned = String(input).replace(/,/g, ".").replace(/[^\d.]/g, "");
@@ -289,17 +315,12 @@ export default function CartPage() {
     }
   }
 
-  const totalCents = useMemo(
-    () => Math.max(0, subtotalCents - walletApplyCents),
-    [subtotalCents, walletApplyCents]
-  );
-
-    // ---- Checkout (shares / renewals / mixed) ----
+  /* ---------- Checkout ---------- */
   async function handleCheckout() {
     try {
       setCheckingOut(true);
 
-      // 1) make sure user is signed in
+      // must be signed in (we are, but double-check)
       const { data: sess } = await supabase.auth.getSession();
       const user = sess?.session?.user;
       if (!user?.id) {
@@ -313,7 +334,7 @@ export default function CartPage() {
         user.user_metadata?.name ||
         "";
 
-      // 2) snapshot CURRENT cart items (for redirects + share emails)
+      // snapshot current cart items
       const snapshotItems = items.map((it) => ({
         horse_id: it.display_horse_id || it.horse_id,
         qty: Number(it.qty || 0),
@@ -325,16 +346,15 @@ export default function CartPage() {
       const hasShares = snapshotItems.some((i) => i.item_type === "share");
       const hasRenewals = snapshotItems.some((i) => i.item_type === "renewal");
 
-      // 3) run checkout (this is where renew_responses get written)
+      // complete checkout (writes renewal responses etc.)
       const result = await cartApi.completeCheckout({
         walletAppliedCents: Number(walletApplyCents || 0),
       });
 
-      // IMPORTANT: this is the *final* list of lines as written to DB
-      // renewal lines here have: item_type, horse_id, horse_name, renew_cycle_id, qty, unit_price_cents
+      // for renewal emails use returned lines (has renew_cycle_id)
       const receiptItems = Array.isArray(result?.items) ? result.items : [];
 
-      // 4) SHARE EMAIL (same as you had)
+      // share email
       const shareLines = snapshotItems.filter((i) => i.item_type === "share");
       if (userEmail && shareLines.length) {
         try {
@@ -359,24 +379,15 @@ export default function CartPage() {
         }
       }
 
-      // 5) RENEWAL EMAILS (⬅ this is the bit we’re fixing)
-      // use the items returned from checkout so we have renew_cycle_id
-      const renewalReceiptLines = receiptItems.filter(
-        (it) => it.item_type === "renewal"
-      );
-
+      // renewal emails
+      const renewalReceiptLines = receiptItems.filter((it) => it.item_type === "renewal");
       if (userEmail && renewalReceiptLines.length) {
         for (const it of renewalReceiptLines) {
-          const cycleId = it.renew_cycle_id; // 👈 this is the key
+          const cycleId = it.renew_cycle_id;
           const sharesRenewed = Number(it.qty || 0);
           const pricePerShare = Number(it.unit_price_cents || 0) / 100;
           const lineTotal = pricePerShare * sharesRenewed;
-
-          // best effort horse name: use receipt first, fall back to horses map
-          const horseName =
-            it.horse_name ||
-            horses[it.horse_id]?.name ||
-            "Horse";
+          const horseName = it.horse_name || horses[it.horse_id]?.name || "Horse";
 
           try {
             await fetch("/api/send-renewal-email", {
@@ -386,12 +397,10 @@ export default function CartPage() {
                 to: userEmail,
                 name: userName,
                 horseName,
-                // 👇 NEW FIELDS your API + template know about
-                renewCycleId: cycleId,         // lets API fetch term_end_date + term_label
-                sharesRenewed,                 // shows "Shares renewed"
-                pricePerShare,                 // shows "Price per share"
-                lineTotal,                     // shows "Total paid"
-                // keep old one for safety
+                renewCycleId: cycleId,
+                sharesRenewed,
+                pricePerShare,
+                lineTotal,
                 amount: lineTotal,
               }),
             }).catch(() => {});
@@ -401,7 +410,7 @@ export default function CartPage() {
         }
       }
 
-      // 6) save receipt in session (same as before)
+      // store receipt & redirect
       const receipt = {
         when: new Date().toISOString(),
         items: snapshotItems,
@@ -413,7 +422,6 @@ export default function CartPage() {
         sessionStorage.setItem("lastCheckout", JSON.stringify(receipt));
       } catch {}
 
-      // 7) redirects (unchanged)
       const subtotalGBP = (receipt.subtotalCents / 100).toFixed(2);
       const walletGBP = (receipt.walletUsedCents / 100).toFixed(2);
       const paidGBP = (receipt.totalDueCents / 100).toFixed(2);
@@ -466,7 +474,7 @@ export default function CartPage() {
     }
   }
 
-  // ---- UI ----
+  /* ---------- UI ---------- */
   return (
     <>
       <Head>
@@ -477,7 +485,7 @@ export default function CartPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
           <Link href="/horses" className="text-green-800 hover:underline">
-            ← Continue browsing
+            ← Continue shopping
           </Link>
         </div>
 
@@ -500,7 +508,7 @@ export default function CartPage() {
             <section className="md:col-span-2 space-y-3">
               {items.map((it) => {
                 const horseId = it.display_horse_id || it.horse_id || null;
-                const h = horseId ? (horses[horseId] || {}) : {};
+                const h = horseId ? horses[horseId] || {} : {};
                 const lineTotal = ((it.unit_price_cents || 0) * (it.qty || 0)) / 100;
 
                 // Per-line cap
@@ -664,9 +672,6 @@ export default function CartPage() {
                 >
                   {checkingOut ? "Processing…" : "Proceed to checkout"}
                 </button>
-
-                <p className="mt-1 text-xs text-gray-500">
-                </p>
               </div>
             </aside>
           </div>
