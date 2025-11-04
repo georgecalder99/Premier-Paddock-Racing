@@ -5,6 +5,26 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import Image from "next/image";
 
+
+function ClientOnlyHero({ children }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    // flip to true on client after hydration
+    setReady(true);
+  }, []);
+  // Show a white block (no layout shift) until ready
+  if (!ready) {
+    return (
+      <section
+        className="relative overflow-hidden"
+        style={{ background: "#fff", minHeight: "52vh" }}
+        aria-hidden="true"
+      />
+    );
+  }
+  return children;
+}
+
 /* ========= Admin helper ========= */
 const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
   .split(",")
@@ -76,7 +96,9 @@ export default function Home() {
       </Head>
 
       <main className="bg-white">
-        <Hero isAdmin={isAdmin} loggedIn={loggedIn} />
+       <ClientOnlyHero>
+  <Hero isAdmin={isAdmin} loggedIn={loggedIn} />
+</ClientOnlyHero>
         <WelcomeToTheClub />
         <RegisterInterest /> {/* moved ABOVE featured horses */}
         <FeaturedHorses />
@@ -88,42 +110,41 @@ export default function Home() {
 }
 
 /* ===========================
-   HERO (sleek, green overlay)
+   HERO (matches your other pages)
 =========================== */
-function Hero({ isAdmin, loggedIn }) {
+function Hero({ isAdmin }) {
   return (
-    <section
-      className="relative overflow-hidden"
-      style={{ backgroundColor: "#2f6f5b" }} // 👈 fallback so it’s green before CSS loads
-    >
-      {/* overlays */}
-      <div className="absolute inset-0 bg-green-900/60 dark:bg-green-900/70" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent dark:from-green-900/60" />
+    <section className="relative overflow-hidden">
+      {/* exact same overlays as your other hero */}
+      <div className="absolute inset-0">
+        <div className="absolute inset-0 bg-green-900/60" />
+        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-green-900/50 to-transparent" />
+      </div>
 
-      {/* Admin button */}
+      {/* optional Admin button (kept) */}
       {isAdmin && (
         <div className="absolute right-6 top-6 z-10">
           <Link
             href="/admin/ballots"
-            className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10 dark:border-white/60 dark:hover:bg-white/15"
+            className="rounded-lg border border-white/70 px-4 py-2 text-white backdrop-blur-sm transition hover:bg-white/10"
           >
             Admin
           </Link>
         </div>
       )}
 
-      {/* Foreground (stable, no auth-based style changes) */}
-      <div className="relative mx-auto max-w-7xl px-6 py-24 text-center text-white md:py-32">
-        <div className="mx-auto max-w-3xl">
-          <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm dark:border-white/20 dark:bg-white/5">
+      {/* content */}
+      <div className="relative max-w-7xl mx-auto px-6 py-24 md:py-32 text-white text-center">
+        <div className="max-w-3xl mx-auto">
+          <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm">
             Your horse, your say
           </span>
 
-          <h1 className="mt-4 text-4xl font-extrabold leading-tight tracking-tight drop-shadow md:text-6xl">
+          <h1 className="mt-4 text-4xl md:text-6xl font-extrabold leading-tight">
             Own a share in a racehorse.
           </h1>
 
-          <p className="mt-5 text-lg text-gray-100 md:text-xl">
+          <p className="mt-5 text-lg md:text-xl text-gray-100">
             Syndicate ownership where you help decide the journey — with live
             transparency on costs and shares.
           </p>
@@ -131,22 +152,22 @@ function Hero({ isAdmin, loggedIn }) {
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
               href="/horses"
-              className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100 dark:bg-green-700 dark:text-white dark:hover:bg-green-600"
+              className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100"
             >
               View Horses
             </Link>
 
             <Link
               href="/how-it-works"
-              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
+              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20"
             >
               How it works
             </Link>
 
-            {/* Keep this button's style/text constant to avoid hydration flash */}
+            {/* fixed label to avoid hydration flash */}
             <Link
               href="/my-paddock"
-              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
+              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20"
             >
               My Paddock
             </Link>
