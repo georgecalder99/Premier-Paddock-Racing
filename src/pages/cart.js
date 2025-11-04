@@ -12,6 +12,47 @@ const fmtGBP = (n) =>
   })}`;
 
 export default function CartPage() {
+      const [session, setSession] = useState(null);
+  const [checkedAuth, setCheckedAuth] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data?.session ?? null);
+      setCheckedAuth(true);
+    });
+  }, []);
+
+  if (!checkedAuth) {
+    // wait until auth check completes (avoids flicker)
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gray-500">
+        Loading...
+      </div>
+    );
+  }
+
+  if (!session) {
+    // 👇 not signed in → show empty basket instead of error
+    return (
+      <main className="max-w-5xl mx-auto px-6 py-10">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
+          <Link href="/horses" className="text-green-800 hover:underline">
+            ← Continue shopping
+          </Link>
+        </div>
+
+        <div className="mt-8 rounded-md border p-6 text-center">
+          <p className="text-gray-700">Your basket is empty.</p>
+          <p className="mt-3">
+            <Link href="/horses" className="text-green-800 underline">
+              Browse horses →
+            </Link>
+          </p>
+        </div>
+      </main>
+    );
+  }
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(null);
   const [items, setItems] = useState([]);
@@ -436,7 +477,7 @@ export default function CartPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl md:text-3xl font-extrabold text-green-900">Your Basket</h1>
           <Link href="/horses" className="text-green-800 hover:underline">
-            ← Continue shopping
+            ← Continue browsing
           </Link>
         </div>
 
