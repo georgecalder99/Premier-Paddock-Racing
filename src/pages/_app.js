@@ -1,36 +1,20 @@
-// src/pages/_app.js
-import '../styles/globals.css';
-import { useEffect, useState } from 'react';
-import Navbar from '../components/Navbar';
-import Footer from '../components/Footer';
-import { supabase } from '../lib/supabaseClient';
-import Script from 'next/script'; // ← ADD
+/* eslint-disable @next/next/no-img-element */
+import "../styles/globals.css";
+import { useEffect } from "react";
+import Head from "next/head";
 
 export default function App({ Component, pageProps }) {
-  const [session, setSession] = useState(null);
-
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (mounted) setSession(data.session ?? null);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-    });
-    return () => {
-      mounted = false;
-      sub?.subscription?.unsubscribe?.();
-    };
+    // Remove the anti-FOUC class as soon as JS runs (hydration)
+    document.documentElement.classList.remove("no-fouc");
   }, []);
 
   return (
     <>
-      {/* Bring back Tailwind (CDN) without the _document sync-script lint error */}
-      <Script src="https://cdn.tailwindcss.com" strategy="beforeInteractive" />
-
-      <Navbar session={session} />
-      <Component {...pageProps} session={session} />
-      <Footer />
+      <Head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </Head>
+      <Component {...pageProps} />
     </>
   );
 }
