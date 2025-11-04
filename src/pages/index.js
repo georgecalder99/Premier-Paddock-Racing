@@ -92,7 +92,10 @@ export default function Home() {
 =========================== */
 function Hero({ isAdmin, loggedIn }) {
   return (
-    <section className="relative overflow-hidden">
+    <section
+      className="relative overflow-hidden"
+      style={{ backgroundColor: "#2f6f5b" }} // 👈 fallback so it’s green before CSS loads
+    >
       {/* overlays */}
       <div className="absolute inset-0 bg-green-900/60 dark:bg-green-900/70" />
       <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-green-900/50 to-transparent dark:from-green-900/60" />
@@ -109,58 +112,57 @@ function Hero({ isAdmin, loggedIn }) {
         </div>
       )}
 
-{/* Foreground (stable, no auth-based style changes) */}
-<div className="relative mx-auto max-w-7xl px-6 py-24 text-center text-white md:py-32">
-  <div className="mx-auto max-w-3xl">
-    <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm dark:border-white/20 dark:bg-white/5">
-      Your horse, your say
-    </span>
+      {/* Foreground (stable, no auth-based style changes) */}
+      <div className="relative mx-auto max-w-7xl px-6 py-24 text-center text-white md:py-32">
+        <div className="mx-auto max-w-3xl">
+          <span className="inline-block rounded-full border border-white/25 bg-white/10 px-4 py-1 text-sm md:text-base uppercase tracking-widest backdrop-blur-sm dark:border-white/20 dark:bg-white/5">
+            Your horse, your say
+          </span>
 
-    <h1 className="mt-4 text-4xl font-extrabold leading-tight tracking-tight drop-shadow md:text-6xl">
-      Own a share in a racehorse.
-    </h1>
+          <h1 className="mt-4 text-4xl font-extrabold leading-tight tracking-tight drop-shadow md:text-6xl">
+            Own a share in a racehorse.
+          </h1>
 
-    <p className="mt-5 text-lg text-gray-100 md:text-xl">
-      Syndicate ownership where you help decide the journey — with live
-      transparency on costs and shares.
-    </p>
+          <p className="mt-5 text-lg text-gray-100 md:text-xl">
+            Syndicate ownership where you help decide the journey — with live
+            transparency on costs and shares.
+          </p>
 
-    <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-      <Link
-        href="/horses"
-        className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100 dark:bg-green-700 dark:text-white dark:hover:bg-green-600"
-      >
-        View Horses
-      </Link>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/horses"
+              className="rounded-lg bg-white px-6 py-3 font-semibold text-green-900 shadow-sm transition hover:bg-gray-100 dark:bg-green-700 dark:text-white dark:hover:bg-green-600"
+            >
+              View Horses
+            </Link>
 
-      <Link
-        href="/how-it-works"
-        className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
-      >
-        How it works
-      </Link>
+            <Link
+              href="/how-it-works"
+              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
+            >
+              How it works
+            </Link>
 
-      {/* Keep this button's style/text constant to avoid hydration flash */}
-      <Link
-        href="/my-paddock"
-        className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
-      >
-        My Paddock
-      </Link>
-    </div>
+            {/* Keep this button's style/text constant to avoid hydration flash */}
+            <Link
+              href="/my-paddock"
+              className="rounded-lg border border-white/70 bg-white/10 px-6 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 dark:border-white/50 dark:bg-white/5 dark:hover:bg-white/10"
+            >
+              My Paddock
+            </Link>
+          </div>
 
-    <ul className="mt-6 flex flex-wrap justify-center gap-4 text-base md:text-lg text-gray-100/90">
-      <li>Vote on key decisions</li>
-      <li>• Transparent costs</li>
-      <li>• Trainer updates</li>
-      <li>• Badges &amp; stable visits</li>
-    </ul>
-  </div>
-</div>
+          <ul className="mt-6 flex flex-wrap justify-center gap-4 text-base md:text-lg text-gray-100/90">
+            <li>Vote on key decisions</li>
+            <li>• Transparent costs</li>
+            <li>• Trainer updates</li>
+            <li>• Badges &amp; stable visits</li>
+          </ul>
+        </div>
+      </div>
     </section>
   );
 }
-
 
 
 /* ===========================
