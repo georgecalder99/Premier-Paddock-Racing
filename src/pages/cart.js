@@ -1259,7 +1259,7 @@ function PromoNotice({ info }) {
 
   return (
     <div className="mt-2 text-xs rounded-md border border-gray-300 bg-gray-50 text-gray-700 px-2 py-1">
-      ℹ️ This promotion has reached its limit — you won’t qualify ({label}).
+     ℹ️ This promotion has reached its limit — you won&apos;t qualify ({label}).
     </div>
   );
 }
