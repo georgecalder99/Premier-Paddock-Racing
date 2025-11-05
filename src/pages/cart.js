@@ -1249,7 +1249,7 @@ function PromoNotice({ info }) {
   if (status === "needs_more") {
     return (
       <div className="mt-2 text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-900 px-2 py-1">
-        ⚠️ You're <strong>{needed}</strong> share{needed === 1 ? "" : "s"} away from: <strong>{label}</strong> — {reward}.{" "}
+        ⚠️ You are <strong>{needed}</strong> share{needed === 1 ? "" : "s"} away from: <strong>{label}</strong> — {reward}.{" "}
         <span className="text-amber-800">
           {Math.max(0, claims.left)} left. First come, first served at checkout. Please note you can only qualify once.
         </span>
