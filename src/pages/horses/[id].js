@@ -448,54 +448,58 @@ export default function HorseDetailPage() {
     return { total, sold, remaining, pct };
   }, [horse, soldTotal]);
 
-  // ---------- Add to basket (detail page) ----------
-  async function addToBasket() {
-    try {
-      // Ensure login for RLS
-      const { data: sess } = await supabase.auth.getSession();
-      if (!sess?.session?.user?.id) {
-        alert("Please log in first to use your basket.");
-        window.location.href = "/my-paddock";
-        return;
-      }
-
-      // Clamp qty (1..100)
-      const n = Math.min(100, Math.max(1, Number(qty || 1)));
-
-      // Optional: live remaining guard so we don’t add beyond remaining
-      const { data: liveHorse, error: liveErr } = await supabase
-        .from("horses")
-        .select("id,total_shares,name")
-        .eq("id", horseId)
-        .single();
-      if (liveErr || !liveHorse) {
-        alert("Could not verify availability. Please try again.");
-        return;
-      }
-      const { data: ownsAll } = await supabase
-        .from("ownerships")
-        .select("shares")
-        .eq("horse_id", horseId);
-      const soldLive = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
-      const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
-      if (remainingLive <= 0) {
-        alert("Sorry, this horse is sold out.");
-        return;
-      }
-      if (n > remainingLive) {
-        alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`);
-        return;
-      }
-
-      // Cart operations
-      const cart = await getOrCreateCart();
-      await addShareToCart(cart.id, horseId, n);
-      window.location.href = "/cart";
-    } catch (e) {
-      console.error("[addToBasket] failed:", e);
-      alert(e?.message || "Sorry, we couldn't add that to your basket. Please try again.");
+// ---------- Add to basket (detail page) ----------
+async function addToBasket() {
+  try {
+    // Ensure login for RLS
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess?.session?.user?.id) {
+      alert("Please log in first to use your basket.");
+      window.location.href = "/my-paddock";
+      return;
     }
+
+    // Clamp qty (1..100)
+    const n = Math.min(100, Math.max(1, Number(qty || 1)));
+
+    // Live remaining guard so we don’t add beyond remaining
+    const { data: liveHorse, error: liveErr } = await supabase
+      .from("horses")
+      .select("id,total_shares,name")
+      .eq("id", horseId)
+      .single();
+    if (liveErr || !liveHorse) {
+      alert("Could not verify availability. Please try again.");
+      return;
+    }
+    const { data: ownsAll } = await supabase
+      .from("ownerships")
+      .select("shares")
+      .eq("horse_id", horseId);
+    const soldLive = (ownsAll || []).reduce((s, o) => s + (o.shares || 0), 0);
+    const remainingLive = Math.max(0, (liveHorse.total_shares ?? 0) - soldLive);
+    if (remainingLive <= 0) {
+      alert("Sorry, this horse is sold out.");
+      return;
+    }
+    if (n > remainingLive) {
+      alert(`Only ${remainingLive} share(s) remaining for ${liveHorse?.name || "this horse"}.`);
+      return;
+    }
+
+    // Cart operations
+    const cart = await getOrCreateCart();
+    // optional 4th arg: horse.share_price as a fallback if horses table is temporarily unreadable
+    await addShareToCart(cart.id, horseId, n /*, horse?.share_price */);
+
+    // Go to basket
+    window.location.href = "/cart";
+  } catch (e) {
+    console.error("[addToBasket] failed:", e);
+    alert(e?.message || "Sorry, we couldn't add that to your basket. Please try again.");
   }
+}
+
 
   if (loading) {
     return (
