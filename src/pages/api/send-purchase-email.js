@@ -70,6 +70,10 @@ function buildEmailHTML({ name, horses, total }) {
       </tfoot>
     </table>
 
+    <p style="margin-top:16px;color:#004225;font-weight:500;">
+      If you have qualified for a promotion, we’ll contact you in due course.
+    </p>
+
     <p style="margin-top:16px;">
       You can view your horses and updates anytime in
       <a href="https://premierpaddockracing.co.uk/my-paddock">My Paddock</a>.
@@ -90,14 +94,20 @@ function buildEmailText({ name, horses, total }) {
   horses.forEach((h) => {
     lines.push(`• ${h.horseName} — ${h.qty} @ £${h.pricePerShare} = £${h.total}`);
   });
-  lines.push("", `Grand Total: £${total}`, "", "Visit your paddock: premierpaddockracing.co.uk/my-paddock");
+  lines.push(
+    "",
+    `Grand Total: £${total}`,
+    "",
+    "If you have qualified for a promotion, we’ll contact you in due course.",
+    "",
+    "Visit your paddock: https://premierpaddockracing.co.uk/my-paddock"
+  );
   return lines.join("\n");
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  // Basic environment checks up-front so you see clear errors
   if (!resendApiKey) {
     console.error("[send-purchase-email] Missing RESEND_API_KEY env var.");
     return res.status(500).json({ error: "Email is temporarily unavailable (missing API key)." });
@@ -109,23 +119,18 @@ export default async function handler(req, res) {
 
   try {
     const { to, horses, name, buyerEmail } = req.body || {};
-
-    // Validate input
     if (!to) return res.status(400).json({ error: "Missing 'to'." });
     if (!Array.isArray(horses) || horses.length === 0) {
       return res.status(400).json({ error: "Missing 'horses' array." });
     }
 
-    // Coerce numeric strings and compute grand total
     const normalized = horses.map((h) => ({
       horseName: String(h.horseName || "Horse"),
       qty: Number(h.qty || 0),
       pricePerShare: Number(h.pricePerShare || 0).toFixed(2),
       total: Number(h.total || (Number(h.qty || 0) * Number(h.pricePerShare || 0))).toFixed(2),
     }));
-    const grandTotal = normalized
-      .reduce((sum, h) => sum + Number(h.total || 0), 0)
-      .toFixed(2);
+    const grandTotal = normalized.reduce((sum, h) => sum + Number(h.total || 0), 0).toFixed(2);
 
     const displayName = await resolveDisplayName(to, name);
 
@@ -137,7 +142,6 @@ export default async function handler(req, res) {
     const html = buildEmailHTML({ name: displayName, horses: normalized, total: grandTotal });
     const text = buildEmailText({ name: displayName, horses: normalized, total: grandTotal });
 
-    // Call Resend
     const { data, error } = await resend.emails.send({
       from: FROM_EMAIL,
       to,

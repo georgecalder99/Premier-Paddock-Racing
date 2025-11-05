@@ -296,8 +296,10 @@ function CreateBallotCard() {
 }
 /* ===========================
    Recent ballots (list + status + RUN DRAW via RPC)
+   Weighted entries + accurate unsuccessful count
    + horse name display
    + Edit / Delete inline
+   + Download winners CSV
 =========================== */
 function RecentBallotsCard() {
   const [items, setItems] = useState([]);
@@ -306,7 +308,10 @@ function RecentBallotsCard() {
   const [filter, setFilter] = useState("open");
   const [running, setRunning] = useState({});
   const [message, setMessage] = useState("");
-  const [entryCounts, setEntryCounts] = useState({});
+
+  // Weighted entry totals per ballot (across ALL users)
+  const [entryTotals, setEntryTotals] = useState({}); // ballot_id -> total_weight
+
   const [openRow, setOpenRow] = useState(null);
   const [resultsByBallot, setResultsByBallot] = useState({});
   const [horseNames, setHorseNames] = useState({});
@@ -338,6 +343,7 @@ function RecentBallotsCard() {
     setLoading(true);
     setMessage("");
 
+    // 1) Fetch ballots
     let query = supabase
       .from("ballots")
       .select("id,horse_id,type,title,cutoff_at,status,event_date,max_winners,description")
@@ -346,36 +352,73 @@ function RecentBallotsCard() {
 
     if (filter !== "all") query = query.eq("status", filter);
 
-    const { data: ballots } = await query;
-    setItems(ballots || []);
+    const { data: ballots, error: bErr } = await query;
+    if (bErr) {
+      console.error("[RecentBallots] ballots error:", bErr);
+      setItems([]);
+      setHorseNames({});
+      setEntryTotals({});
+      setLoading(false);
+      return;
+    }
 
-    // horse name map
-    const horseIds = Array.from(new Set((ballots || []).map(b => b.horse_id).filter(Boolean)));
+    const list = ballots || [];
+    setItems(list);
+
+    // 2) Horse names
+    const horseIds = Array.from(new Set(list.map(b => b.horse_id).filter(Boolean)));
     if (horseIds.length) {
-      const { data: hs } = await supabase
+      const { data: hs, error: hErr } = await supabase
         .from("horses")
         .select("id,name")
         .in("id", horseIds);
-      setHorseNames(Object.fromEntries((hs || []).map(h => [h.id, h.name])));
+      if (!hErr && hs) {
+        setHorseNames(Object.fromEntries(hs.map(h => [h.id, h.name])));
+      } else {
+        setHorseNames({});
+      }
     } else {
       setHorseNames({});
     }
 
-    // entry counts per ballot
-    const ids = (ballots || []).map((b) => b.id);
-    if (ids.length > 0) {
-      const pairs = await Promise.all(
-        ids.map(async (id) => {
-          const { count } = await supabase
-            .from("ballot_entries")
-            .select("*", { count: "exact", head: true })
-            .eq("ballot_id", id);
-          return [id, count || 0];
-        })
-      );
-      setEntryCounts(Object.fromEntries(pairs));
+    // 3) Weighted totals per ballot (fallback to client sum if RPC missing)
+    const ids = list.map(b => b.id);
+    if (ids.length) {
+      let totalsMap = {};
+      let rpcFailed = false;
+      try {
+        const { data: totals, error: rpcErr } = await supabase.rpc("ballot_totals", {
+          p_ballot_ids: ids
+        });
+        if (rpcErr) {
+          rpcFailed = true;
+        } else {
+          totalsMap = Object.fromEntries(
+            (totals || []).map(r => [r.ballot_id, Number(r.total_weight || 0)])
+          );
+        }
+      } catch {
+        rpcFailed = true;
+      }
+
+      if (rpcFailed) {
+        const { data: entries, error: eErr } = await supabase
+          .from("ballot_entries")
+          .select("ballot_id, weight")
+          .in("ballot_id", ids);
+        if (!eErr && entries) {
+          const m = {};
+          for (const row of entries) {
+            const w = Number.isFinite(Number(row.weight)) ? Number(row.weight) : 1;
+            m[row.ballot_id] = (m[row.ballot_id] || 0) + w;
+          }
+          totalsMap = m;
+        }
+      }
+
+      setEntryTotals(totalsMap);
     } else {
-      setEntryCounts({});
+      setEntryTotals({});
     }
 
     setLoading(false);
@@ -390,22 +433,53 @@ function RecentBallotsCard() {
       const { error } = await supabase.from("ballots").update({ status }).eq("id", id);
       if (error) throw error;
       await load();
-    } catch {
-      alert("Could not update status.");
+    } catch (e) {
+      console.error("[RecentBallots] updateStatus", e);
+      alert(e?.message || "Could not update status.");
     } finally {
       setUpdating((p) => ({ ...p, [id]: false }));
     }
   }
 
+  // Winners + unsuccessful entries (weighted)
   async function loadResults(ballotId) {
-    const { data } = await supabase
+    const { data: results, error: rErr } = await supabase
       .from("ballot_results")
       .select("user_id,result")
       .eq("ballot_id", ballotId);
 
-    const winners = (data || []).filter((r) => r.result === "winner").map((r) => r.user_id);
-    const unsuccessfulCount = (data || []).filter((r) => r.result !== "winner").length;
-    setResultsByBallot((p) => ({ ...p, [ballotId]: { winners, unsuccessfulCount } }));
+    if (rErr) {
+      console.error("[RecentBallots] loadResults results err:", rErr);
+      setResultsByBallot((p) => ({ ...p, [ballotId]: { winners: [], unsuccessfulEntries: 0 } }));
+      return;
+    }
+
+    const winners = (results || []).filter(r => r.result === "winner").map(r => r.user_id);
+
+    // Sum winners' weights to compute unsuccessful = total - winnersWeight
+    let winnersWeightSum = 0;
+    if (winners.length) {
+      const { data: winEntries, error: weErr } = await supabase
+        .from("ballot_entries")
+        .select("user_id, weight")
+        .eq("ballot_id", ballotId)
+        .in("user_id", winners);
+
+      if (!weErr && winEntries) {
+        winnersWeightSum = winEntries.reduce(
+          (s, r) => s + (Number.isFinite(Number(r.weight)) ? Number(r.weight) : 1),
+          0
+        );
+      }
+    }
+
+    const totalWeighted = Number(entryTotals[ballotId] || 0);
+    const unsuccessfulEntries = Math.max(0, totalWeighted - winnersWeightSum);
+
+    setResultsByBallot((p) => ({
+      ...p,
+      [ballotId]: { winners, unsuccessfulEntries }
+    }));
   }
 
   async function runDraw(ballotId) {
@@ -415,20 +489,59 @@ function RecentBallotsCard() {
       const { error } = await supabase.rpc("run_ballot_draw", { p_ballot_id: ballotId });
       if (error) throw error;
 
-      const { count: winnersCount } = await supabase
-        .from("ballot_results")
-        .select("*", { count: "exact", head: true })
-        .eq("ballot_id", ballotId)
-        .eq("result", "winner");
-
-      setMessage(`Draw complete. Winners: ${winnersCount ?? 0}.`);
+      // refresh list & totals and winners panel if open
       await load();
-      if (openRow === ballotId) await loadResults(ballotId);
+      await loadResults(ballotId);
+
+      setMessage("Draw complete.");
     } catch (e) {
       console.error("Run draw failed:", e);
-      alert("Draw failed. Check console and that the DB function/policies exist.");
+      alert(e?.message || "Draw failed. Please check console and database function/policies.");
     } finally {
       setRunning((p) => ({ ...p, [ballotId]: false }));
+    }
+  }
+
+  // ---- CSV download of winners' emails ----
+  function buildCSV(rows) {
+    const esc = (s) => {
+      const v = (s ?? "").toString();
+      return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    };
+    const header = ["user_id","email","full_name"];
+    const lines = [header.join(",")];
+    rows.forEach(r => {
+      lines.push([esc(r.user_id), esc(r.email), esc(r.full_name)].join(","));
+    });
+    return lines.join("\n");
+  }
+
+  async function downloadWinnersCSV(ballot) {
+    try {
+      const ballotId = ballot.id;
+      // get winners with email via RPC
+      const { data, error } = await supabase.rpc("admin_ballot_winner_emails", {
+        p_ballot_id: ballotId
+      });
+      if (error) throw error;
+
+      const rows = data || [];
+      const csv = buildCSV(rows);
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const fnameSafe = (ballot.title || "winners").replace(/[^\w\d-_]+/g, "_").slice(0,80);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${fnameSafe}_winners.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("[downloadWinnersCSV]", e);
+      alert(e?.message || "Could not download winners CSV.");
     }
   }
 
@@ -521,7 +634,7 @@ function RecentBallotsCard() {
       ) : (
         <ul className="mt-4 divide-y">
           {items.map((b) => {
-            const entries = entryCounts[b.id] ?? 0;
+            const entriesWeighted = Number(entryTotals[b.id] || 0);
             const expanded = openRow === b.id;
             const results = resultsByBallot[b.id];
             const isDrawn = b.status === "drawn";
@@ -543,13 +656,11 @@ function RecentBallotsCard() {
                         <div className="text-xs text-gray-600">
                           Horse: <strong>{horseName}</strong> • Closes {new Date(b.cutoff_at).toLocaleString()} • Status:{" "}
                           <span className="uppercase tracking-wide font-semibold">{b.status}</span>{" "}
-                          • Entries: <strong>{entries}</strong>
+                          • Entries (weighted): <strong>{entriesWeighted}</strong>
                         </div>
                       </div>
 
-                      {/* Actions row */}
                       <div className="flex items-center gap-2">
-                        {/* Show OPEN only when currently closed (and not drawing/drawn) */}
                         {b.status === "closed" && !running[b.id] && !isDrawn && (
                           <button
                             onClick={() => updateStatus(b.id, "open")}
@@ -560,7 +671,6 @@ function RecentBallotsCard() {
                           </button>
                         )}
 
-                        {/* Show CLOSE only when currently open (and not drawing/drawn) */}
                         {b.status === "open" && !running[b.id] && !isDrawn && (
                           <button
                             onClick={() => updateStatus(b.id, "closed")}
@@ -571,7 +681,6 @@ function RecentBallotsCard() {
                           </button>
                         )}
 
-                        {/* Run draw (only available when not drawn yet) */}
                         <button
                           onClick={() => runDraw(b.id)}
                           disabled={running[b.id] || isDrawn}
@@ -581,21 +690,30 @@ function RecentBallotsCard() {
                           {running[b.id] ? "Running…" : "Run draw"}
                         </button>
 
-                        {/* Winners toggle appears only after draw is complete */}
                         {isDrawn && (
-                          <button
-                            onClick={async () => {
-                              const next = expanded ? null : b.id;
-                              setOpenRow(next);
-                              if (next && !resultsByBallot[b.id]) await loadResults(b.id);
-                            }}
-                            className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
-                          >
-                            {expanded ? "Hide winners" : "View winners"}
-                          </button>
+                          <>
+                            <button
+                              onClick={async () => {
+                                const next = expanded ? null : b.id;
+                                setOpenRow(next);
+                                if (next) await loadResults(b.id);
+                              }}
+                              className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                            >
+                              {expanded ? "Hide winners" : "View winners"}
+                            </button>
+
+                            {/* NEW: Download winners CSV */}
+                            <button
+                              onClick={() => downloadWinnersCSV(b)}
+                              className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
+                              title="Download winners' emails as CSV"
+                            >
+                              Download winners (CSV)
+                            </button>
+                          </>
                         )}
 
-                        {/* Edit / Delete */}
                         <button
                           onClick={() => beginEdit(b)}
                           className="px-3 py-1 border rounded text-sm hover:bg-gray-50"
@@ -618,7 +736,7 @@ function RecentBallotsCard() {
                         ) : results.winners.length === 0 ? (
                           <p className="text-sm text-gray-600">
                             No winners recorded for this draw.
-                            {entries > 0 ? ` (${results.unsuccessfulCount} unsuccessful entries)` : ""}
+                            {entriesWeighted > 0 ? ` (Unsuccessful entries: ${results.unsuccessfulEntries})` : ""}
                           </p>
                         ) : (
                           <>
@@ -628,14 +746,15 @@ function RecentBallotsCard() {
                                 <li key={uid}><span className="font-mono text-xs">{uid}</span></li>
                               ))}
                             </ul>
-                            <p className="text-xs text-gray-600 mt-2">Unsuccessful entries: {results.unsuccessfulCount}</p>
+                            <p className="text-xs text-gray-600 mt-2">
+                              Unsuccessful entries (weighted): {results.unsuccessfulEntries}
+                            </p>
                           </>
                         )}
                       </div>
                     )}
                   </>
                 ) : (
-                  // Inline edit card
                   <div className="rounded-lg border bg-gray-50 p-3">
                     <div className="grid sm:grid-cols-2 gap-3">
                       <label className="text-sm">
@@ -762,7 +881,6 @@ function RecentBallotsCard() {
     </section>
   );
 }
-
 /* ===========================
    Post + Manage Horse Updates (ADMIN)
 =========================== */
@@ -2500,7 +2618,7 @@ function CreateVoteCard() {
    MANAGE VOTES (admin)
    - List open/closed/all
    - Open/close, delete
-   - Live results (admins can see even while open)
+   - Live results (weighted)
 =========================== */
 function ManageVotesCard() {
   const [filter, setFilter] = useState("open"); // open|closed|all
@@ -2508,7 +2626,7 @@ function ManageVotesCard() {
   const [rows, setRows] = useState([]);
   const [horsesById, setHorsesById] = useState({});
   const [optionsByVote, setOptionsByVote] = useState({});
-  const [countsByOption, setCountsByOption] = useState({});
+  const [countsByOption, setCountsByOption] = useState({}); // { option_id: totalWeight }
   const [updating, setUpdating] = useState({});
   const [openRow, setOpenRow] = useState(null); // expanded vote id
 
@@ -2581,11 +2699,11 @@ function ManageVotesCard() {
       setOptionsByVote({});
     }
 
-    // 4) counts per option (from vote_responses)
+    // 4) WEIGHTED counts per option (from vote_responses)
     if (optionIds.length) {
       const { data: responses, error: rErr } = await supabase
         .from("vote_responses")
-        .select("option_id")
+        .select("option_id, weight")
         .in("option_id", optionIds);
 
       if (rErr) {
@@ -2595,9 +2713,11 @@ function ManageVotesCard() {
         return;
       }
 
+      // Sum weights (default weight -> 1 for legacy rows)
       const counts = {};
       (responses || []).forEach((r) => {
-        counts[r.option_id] = (counts[r.option_id] || 0) + 1;
+        const w = Number.isFinite(Number(r.weight)) ? Number(r.weight) : 1;
+        counts[r.option_id] = (counts[r.option_id] || 0) + w;
       });
       setCountsByOption(counts);
     } else {
@@ -2663,6 +2783,7 @@ function ManageVotesCard() {
             const expanded = openRow === v.id;
             const opts = optionsByVote[v.id] || [];
             const total = opts.reduce((sum, o) => sum + (countsByOption[o.id] || 0), 0);
+
             return (
               <li key={v.id} className="py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -2711,13 +2832,13 @@ function ManageVotesCard() {
                     ) : (
                       <ul className="grid sm:grid-cols-2 gap-2">
                         {opts.map((o) => {
-                          const c = countsByOption[o.id] || 0;
-                          const pct = total > 0 ? Math.round((c / total) * 100) : 0;
+                          const weighted = countsByOption[o.id] || 0;
+                          const pct = total > 0 ? Math.round((weighted / total) * 100) : 0;
                           return (
                             <li key={o.id} className="rounded border bg-white p-3">
                               <div className="text-sm font-medium text-gray-800">{o.label}</div>
                               <div className="text-xs text-gray-600 mt-1">
-                                {c} vote{c === 1 ? "" : "s"} {total > 0 ? `• ${pct}%` : ""}
+                                {weighted} vote{weighted === 1 ? "" : "s"} {total > 0 ? `• ${pct}%` : ""}
                               </div>
                               <div className="mt-2 h-2 bg-gray-200 rounded">
                                 <div
@@ -2734,7 +2855,7 @@ function ManageVotesCard() {
                     <div className="text-xs text-gray-600 mt-3">
                       Total votes: <strong>{total}</strong>
                       <span className="ml-2 text-[11px] text-gray-500">
-                        (Admins can see live results even while open)
+                        (Weighted by allocated votes; admins can see live results even while open)
                       </span>
                     </div>
                   </div>
@@ -3704,42 +3825,6 @@ function ActivePromotionsList() {
     try { return x ? new Date(x).toLocaleString() : "—"; } catch { return "—"; }
   };
 
-  // Secure CSV download: uses Supabase access token (works in prod w/ SameSite issues)
-  async function downloadCsv(promotionId) {
-    try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token;
-      if (!token) {
-        alert("Please sign in to download the CSV.");
-        window.location.href = "/my-paddock";
-        return;
-      }
-
-      const res = await fetch(
-        `/api/promotions/export?promotion_id=${encodeURIComponent(promotionId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Export failed (${res.status}): ${text || res.statusText}`);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `promotion-${promotionId}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error("[downloadCsv] error", e);
-      alert(e?.message || "Could not download CSV. Please try again.");
-    }
-  }
-
   // normalize a row coming from Active RPC
   function normalizeActiveRow(r) {
     return {
@@ -3934,7 +4019,7 @@ function ActivePromotionsList() {
                   <div className="font-medium">
                     {r.horse_name ?? "Horse"}{" "}
                     <span className="text-xs text-gray-500">
-                      · Min {r.min_shares_required} or more shares · Quota {r.quota}
+                    · Min {r.min_shares_required} or more shares · Quota {r.quota}
                     </span>
                   </div>
                   <div className="text-sm text-gray-700">
@@ -3960,16 +4045,13 @@ function ActivePromotionsList() {
                   >
                     View horse →
                   </Link>
-
-                  {/* CSV: use client fetch + Authorization header */}
-                  <button
-                    onClick={() => downloadCsv(r._id)}
+                  <a
+                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(r._id)}`}
                     className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
                     title="Download qualifying emails (CSV)"
                   >
                     CSV
-                  </button>
-
+                  </a>
                   <button
                     onClick={() => disablePromotion(r._id)}
                     className="px-3 py-1.5 border rounded text-sm hover:bg-gray-50"
@@ -4007,7 +4089,7 @@ function ActivePromotionsList() {
                   <div className="font-medium">
                     {p.horse_name}{" "}
                     <span className="text-xs text-gray-500">
-                      · Min {p.min_shares_required ?? "—"} or more shares · Quota {p.quota ?? "—"}
+                  · Min {p.min_shares_required ?? "—"} or more shares · Quota {p.quota ?? "—"}
                     </span>
                   </div>
                   <div className="text-sm text-gray-700">
@@ -4027,16 +4109,13 @@ function ActivePromotionsList() {
                   >
                     View horse →
                   </Link>
-
-                  {/* CSV: use client fetch + Authorization header */}
-                  <button
-                    onClick={() => downloadCsv(p._id)}
+                  <a
+                    href={`/api/promotions/export?promotion_id=${encodeURIComponent(p._id)}`}
                     className="px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700"
                     title="Download the qualifying emails for this finished promo"
                   >
                     CSV
-                  </button>
-
+                  </a>
                   <button
                     onClick={() => deletePromotion(p._id)}
                     className="px-3 py-1.5 rounded text-sm text-white bg-red-600 hover:bg-red-700"

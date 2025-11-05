@@ -538,7 +538,7 @@ function OwnedTab({ loading, owned, goTab }) {
 }
 
 /* ===========================
-   BALLOTS SECTION header (kept)
+   BALLOTS SECTION (weighted entries by shares)
 =========================== */
 function BallotsSection({ userId, ownedHorseIds }) {
   const [sub, setSub] = useState("open"); // open | results
@@ -547,16 +547,11 @@ function BallotsSection({ userId, ownedHorseIds }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <h2 className="text-2xl font-bold text-green-900">Ballots</h2>
         <div className="flex flex-wrap gap-2">
-          <SubTab id="open" sub={sub} setSub={setSub}>
-            Open ballots
-          </SubTab>
-          <SubTab id="results" sub={sub} setSub={setSub}>
-            My results
-          </SubTab>
+          <SubTab id="open" sub={sub} setSub={setSub}>Open ballots</SubTab>
+          <SubTab id="results" sub={sub} setSub={setSub}>My results</SubTab>
         </div>
       </div>
 
-      {/* These rely on your existing implementations elsewhere in this file */}
       {sub === "open" && (
         <OpenBallots userId={userId} ownedHorseIds={ownedHorseIds} />
       )}
@@ -581,14 +576,16 @@ function SubTab({ id, sub, setSub, children }) {
   );
 }
 
-/* ----- Open ballots (for owned horses) ----- */
+/* ----- Open ballots (weighted by owned shares) ----- */
 function OpenBallots({ userId, ownedHorseIds }) {
   const [loading, setLoading] = useState(true);
   const [openBallots, setOpenBallots] = useState([]);
-  const [myEntries, setMyEntries] = useState(new Set());
-  const [entryCounts, setEntryCounts] = useState({});
-  const [joining, setJoining] = useState({}); // ballot_id -> bool
-  const [horseNames, setHorseNames] = useState({}); // horse_id -> name
+  const [enteredBallots, setEnteredBallots] = useState(new Set()); // ballots I’ve entered
+  const [entryTotals, setEntryTotals] = useState({});              // ballot_id -> SUM(weight) across ALL users (RPC)
+  const [myUsedByBallot, setMyUsedByBallot] = useState({});        // ballot_id -> my used entries (weight)
+  const [joining, setJoining] = useState({});                      // ballot_id -> bool
+  const [horseNames, setHorseNames] = useState({});                // horse_id -> name
+  const [mySharesByHorse, setMySharesByHorse] = useState({});      // horse_id -> my shares (>=1)
 
   useEffect(() => {
     async function load() {
@@ -596,53 +593,100 @@ function OpenBallots({ userId, ownedHorseIds }) {
 
       if (!ownedHorseIds || ownedHorseIds.length === 0) {
         setOpenBallots([]);
-        setMyEntries(new Set());
-        setEntryCounts({});
+        setEnteredBallots(new Set());
+        setEntryTotals({});
+        setMyUsedByBallot({});
         setHorseNames({});
+        setMySharesByHorse({});
         setLoading(false);
         return;
       }
 
-      const { data: ballots } = await supabase
+      // 1) Open ballots for owned horses
+      const { data: ballots, error: ballotsErr } = await supabase
         .from("ballots")
         .select("id,horse_id,type,title,description,event_date,cutoff_at,max_winners,status")
         .eq("status", "open")
         .in("horse_id", ownedHorseIds)
         .order("cutoff_at", { ascending: true });
 
-      setOpenBallots(ballots || []);
+      if (ballotsErr) {
+        console.error("[OpenBallots] ballots error:", ballotsErr);
+        setOpenBallots([]);
+        setLoading(false);
+        return;
+      }
 
-      // horse names for these ballots
-      const ids = Array.from(new Set((ballots || []).map(b => b.horse_id))).filter(Boolean);
-      if (ids.length) {
+      const list = ballots || [];
+      setOpenBallots(list);
+
+      const horseIds = Array.from(new Set(list.map(b => b.horse_id))).filter(Boolean);
+      const ballotIds = list.map(b => b.id);
+
+      // 2) Horse names
+      if (horseIds.length) {
         const { data: horses } = await supabase
           .from("horses")
           .select("id,name")
-          .in("id", ids);
+          .in("id", horseIds);
         setHorseNames(Object.fromEntries((horses || []).map(h => [h.id, h.name])));
       } else {
         setHorseNames({});
       }
 
-      // which ballots I've entered
-      const { data: entries } = await supabase
-        .from("ballot_entries")
-        .select("ballot_id")
-        .eq("user_id", userId);
-      setMyEntries(new Set((entries || []).map((e) => e.ballot_id)));
-
-      // counts per ballot
-      const counts = {};
-      if (ballots && ballots.length) {
-        for (const b of ballots) {
-          const { count } = await supabase
-            .from("ballot_entries")
-            .select("*", { count: "exact", head: true })
-            .eq("ballot_id", b.id);
-          counts[b.id] = count || 0;
-        }
+      // 3) My shares per horse (used as "available entries")
+      let myShares = {};
+      if (horseIds.length) {
+        const { data: owns } = await supabase
+          .from("ownerships")
+          .select("horse_id, shares")
+          .eq("user_id", userId)
+          .in("horse_id", horseIds);
+        myShares = Object.fromEntries(
+          (owns || []).map(o => [o.horse_id, Math.max(1, Number(o.shares || 0))])
+        );
       }
-      setEntryCounts(counts);
+      setMySharesByHorse(myShares);
+
+      // 4) My used entries per ballot (weight stored on my ballot_entries row)
+      if (ballotIds.length) {
+        const { data: entriesMine } = await supabase
+          .from("ballot_entries")
+          .select("ballot_id, weight")
+          .eq("user_id", userId)
+          .in("ballot_id", ballotIds);
+
+        const usedMap = {};
+        const entered = new Set();
+        (entriesMine || []).forEach(r => {
+          const used = Number.isFinite(Number(r.weight)) ? Number(r.weight) : 1;
+          usedMap[r.ballot_id] = Math.max(0, used);
+          entered.add(r.ballot_id);
+        });
+        setMyUsedByBallot(usedMap);
+        setEnteredBallots(entered);
+      } else {
+        setMyUsedByBallot({});
+        setEnteredBallots(new Set());
+      }
+
+      // 5) Total weighted entries across ALL users (RPC -> bypass RLS)
+      if (ballotIds.length) {
+        const { data: totals, error: rpcErr } = await supabase.rpc("ballot_totals", {
+          p_ballot_ids: ballotIds
+        });
+        if (rpcErr) {
+          console.warn("[OpenBallots] ballot_totals RPC error:", rpcErr);
+          setEntryTotals({});
+        } else {
+          const map = Object.fromEntries(
+            (totals || []).map(r => [r.ballot_id, Number(r.total_weight || 0)])
+          );
+          setEntryTotals(map);
+        }
+      } else {
+        setEntryTotals({});
+      }
 
       setLoading(false);
     }
@@ -650,20 +694,54 @@ function OpenBallots({ userId, ownedHorseIds }) {
   }, [userId, ownedHorseIds]);
 
   async function enter(ballotId) {
-    setJoining((p) => ({ ...p, [ballotId]: true }));
+    setJoining(p => ({ ...p, [ballotId]: true }));
     try {
-      const { error } = await supabase.from("ballot_entries").insert({
-        ballot_id: ballotId,
-        user_id: userId,
-      });
-      if (error) {
-        alert(error.code === "23505" ? "You're already entered." : "Could not enter ballot.");
+      // Prevent duplicate entry per user
+      const { data: exists } = await supabase
+        .from("ballot_entries")
+        .select("id")
+        .eq("ballot_id", ballotId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (exists) {
+        alert("You're already entered.");
         return;
       }
-      setMyEntries((prev) => new Set([...prev, ballotId]));
-      setEntryCounts((prev) => ({ ...prev, [ballotId]: (prev[ballotId] || 0) + 1 }));
+
+      // Determine weight from my shares for this ballot's horse
+      const b = openBallots.find(x => x.id === ballotId);
+      const horseId = b?.horse_id || null;
+      const available = horseId ? Math.max(1, Number(mySharesByHorse[horseId] || 1)) : 1;
+      const weight = available; // one click uses all available entries
+
+      // Insert the entry with weight; if weight column missing, fallback insert without it
+      const { error: insertErr } = await supabase.from("ballot_entries").insert({
+        ballot_id: ballotId,
+        user_id: userId,
+        weight
+      });
+      if (insertErr) {
+        if (insertErr.code === "42703") {
+          // weight column missing; fallback unweighted
+          const { error: e2 } = await supabase.from("ballot_entries").insert({
+            ballot_id: ballotId,
+            user_id: userId
+          });
+          if (e2) throw e2;
+        } else {
+          throw insertErr;
+        }
+      }
+
+      // Optimistic UI updates
+      setEnteredBallots(prev => new Set([...prev, ballotId]));
+      setMyUsedByBallot(prev => ({ ...prev, [ballotId]: weight }));
+      setEntryTotals(prev => ({ ...prev, [ballotId]: (prev[ballotId] || 0) + weight }));
+    } catch (e) {
+      console.error("[OpenBallots] enter error:", e);
+      alert("Could not enter ballot. Please try again.");
     } finally {
-      setJoining((p) => ({ ...p, [ballotId]: false }));
+      setJoining(p => ({ ...p, [ballotId]: false }));
     }
   }
 
@@ -679,22 +757,27 @@ function OpenBallots({ userId, ownedHorseIds }) {
   return (
     <div className="grid md:grid-cols-2 gap-6">
       {openBallots.map((b) => {
-        const entered = myEntries.has(b.id);
-        const cnt = entryCounts[b.id] ?? 0;
-        const typeLabel = b.type === "badge" ? "Owners’ badges" : "Stable visit";
+        const entered = enteredBallots.has(b.id);
         const isClosedByTime = b.cutoff_at && new Date(b.cutoff_at).getTime() <= Date.now();
         const horseName = b.horse_id ? (horseNames[b.horse_id] || "—") : "—";
 
+        const available = Math.max(1, Number(mySharesByHorse[b.horse_id] || 1)); // Available entries = shares
+        const used = Math.min(available, Number(myUsedByBallot[b.id] || 0));     // Used entries = my weight recorded
+        const totalWeighted = Number(entryTotals[b.id] || 0);                     // Total (all users, weighted)
+
+        const typeLabel = b.type === "badge" ? "Owners’ badges" : "Stable visit";
+
         return (
-          <article key={b.id} className="bg-white rounded-xl border p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
-            {/* 🐴 Horse name at top (same style as Voting) */}
+          <article
+            key={b.id}
+            className="bg-white rounded-xl border p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10"
+          >
             {horseName && horseName !== "—" && (
               <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
             )}
 
             <h3 className="text-lg font-semibold text-green-900">{b.title}</h3>
 
-            {/* Subheading (keep everything else, but don’t repeat the horse name) */}
             <p className="text-sm text-gray-600 mt-1">
               {typeLabel}
               {b.event_date ? ` • Event: ${new Date(b.event_date).toLocaleDateString()}` : ""}
@@ -705,16 +788,14 @@ function OpenBallots({ userId, ownedHorseIds }) {
 
             <div className="mt-3 text-sm font-semibold text-green-900">Ballot information</div>
             <div className="mt-1 text-xs text-gray-600">
+              <div>Closes: <strong>{new Date(b.cutoff_at).toLocaleString()}</strong></div>
+              {b.max_winners > 0 && <div>Winners: <strong>{b.max_winners}</strong></div>}
               <div>
-                Closes: <strong>{new Date(b.cutoff_at).toLocaleString()}</strong>
-              </div>
-              {b.max_winners > 0 && (
-                <div>
-                  Winners: <strong>{b.max_winners}</strong>
-                </div>
-              )}
-              <div>
-                Entries so far: <strong>{cnt}</strong>
+                Available entries: <strong>{available}</strong>
+                {"  •  "}
+                Used entries: <strong>{used}</strong>
+                {"  •  "}
+                Total entries: <strong>{totalWeighted}</strong>
               </div>
             </div>
 
@@ -725,7 +806,7 @@ function OpenBallots({ userId, ownedHorseIds }) {
                 className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
                 title={entered ? "Already entered" : isClosedByTime ? "Closed" : "Enter ballot"}
               >
-                {entered ? "Entered" : isClosedByTime ? "Closed" : joining[b.id] ? "Entering…" : "Enter ballot"}
+                {entered ? "Entered" : isClosedByTime ? "Closed" : (joining[b.id] ? "Entering…" : "Enter ballot")}
               </button>
               {b.horse_id && (
                 <Link
@@ -743,7 +824,8 @@ function OpenBallots({ userId, ownedHorseIds }) {
   );
 }
 
-/* ----- My Results (with Reveal + confetti + extra details) ----- */
+
+/* ----- My Results (unchanged display; draw logic should read weights server-side) ----- */
 function MyResults({ userId }) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]); // [{ ballot, result, horse }]
@@ -754,7 +836,6 @@ function MyResults({ userId }) {
     async function load() {
       setLoading(true);
 
-      // 1) user’s results
       const { data: results, error: resErr } = await supabase
         .from("ballot_results")
         .select("ballot_id, result")
@@ -774,7 +855,6 @@ function MyResults({ userId }) {
         return;
       }
 
-      // 2) ballots for those ids
       const { data: ballots, error: ballotsErr } = await supabase
         .from("ballots")
         .select("id, title, type, event_date, cutoff_at, horse_id")
@@ -787,10 +867,7 @@ function MyResults({ userId }) {
         return;
       }
 
-      // 3) horses for those ballots
-      const horseIds = Array.from(
-        new Set((ballots || []).map((b) => b.horse_id))
-      ).filter(Boolean);
+      const horseIds = Array.from(new Set((ballots || []).map((b) => b.horse_id))).filter(Boolean);
 
       let horseMap = {};
       if (horseIds.length) {
@@ -798,15 +875,12 @@ function MyResults({ userId }) {
           .from("horses")
           .select("id, name, photo_url")
           .in("id", horseIds);
-
         if (!hErr && horses) {
           horseMap = Object.fromEntries(horses.map((h) => [h.id, h]));
         }
       }
 
-      const ballotById = Object.fromEntries(
-        (ballots || []).map((b) => [b.id, b])
-      );
+      const ballotById = Object.fromEntries((ballots || []).map((b) => [b.id, b]));
 
       const merged = (results || [])
         .map((r) => {
@@ -819,12 +893,7 @@ function MyResults({ userId }) {
           };
         })
         .filter(Boolean)
-        // newest / most recent draws first
-        .sort(
-          (a, b) =>
-            new Date(b.ballot.cutoff_at).getTime() -
-            new Date(a.ballot.cutoff_at).getTime()
-        );
+        .sort((a, b) => new Date(b.ballot.cutoff_at).getTime() - new Date(a.ballot.cutoff_at).getTime());
 
       setRows(merged);
       setLoading(false);
@@ -860,7 +929,6 @@ function MyResults({ userId }) {
         return (
           <li key={b.id} className="rounded-lg border bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
-              {/* LEFT: horse image + text */}
               <div className="flex gap-3">
                 {horse?.photo_url ? (
                   <img
@@ -869,7 +937,6 @@ function MyResults({ userId }) {
                     className="w-14 h-14 rounded object-cover"
                   />
                 ) : null}
-
                 <div>
                   {horse?.name ? (
                     <h4 className="text-sm text-green-700 font-semibold mb-1">
@@ -880,10 +947,7 @@ function MyResults({ userId }) {
                   <div className="font-medium">
                     {b.title}{" "}
                     <span className="text-xs text-gray-500">
-                      ({typeLabel}){" "}
-                      {b.event_date
-                        ? `• ${new Date(b.event_date).toLocaleDateString()}`
-                        : ""}
+                      ({typeLabel}) {b.event_date ? `• ${new Date(b.event_date).toLocaleDateString()}` : ""}
                     </span>
                   </div>
                   <div className="text-xs text-gray-600">
@@ -892,7 +956,6 @@ function MyResults({ userId }) {
                 </div>
               </div>
 
-              {/* RIGHT: actions */}
               <div className="flex items-center gap-2">
                 {b.horse_id ? (
                   <Link
@@ -911,17 +974,11 @@ function MyResults({ userId }) {
               </div>
             </div>
 
-            {/* REVEALED RESULT */}
             {isRevealed ? (
               <div className="mt-3 relative">
                 {isWinner ? (
                   <>
-                    <Confetti
-                      width={width}
-                      height={height}
-                      recycle={false}
-                      numberOfPieces={250}
-                    />
+                    <Confetti width={width} height={height} recycle={false} numberOfPieces={250} />
                     <WinCard />
                   </>
                 ) : (
@@ -965,26 +1022,29 @@ function VotingSection({ userId, ownedHorseIds, isAdmin }) {
   );
 }
 
-/* ----- Open Votes (single-choice polls; one-shot, no updates) ----- */
+/* ----- Open Votes (weighted; confirms submission) ----- */
 function OpenVotes({ userId, ownedHorseIds }) {
   const [loading, setLoading] = useState(true);
-  const [votes, setVotes] = useState([]);
   const [saving, setSaving] = useState({});
-  const [chosen, setChosen] = useState({});
-  const [horseNames, setHorseNames] = useState({}); // 🐴 new
+  const [horseNames, setHorseNames] = useState({});
+  const [rows, setRows] = useState([]); // [{vote, options, allocations, cap, used, submitted}]
+  const [err, setErr] = useState("");
 
+  // load open votes + options + my current weights + caps
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setErr("");
 
       if (!ownedHorseIds || ownedHorseIds.length === 0) {
-        setVotes([]);
+        setRows([]);
         setHorseNames({});
         setLoading(false);
         return;
       }
 
       const nowIso = new Date().toISOString();
+
       const { data: openVotes } = await supabase
         .from("votes")
         .select("id, horse_id, title, description, status, cutoff_at, created_at")
@@ -994,101 +1054,173 @@ function OpenVotes({ userId, ownedHorseIds }) {
         .order("created_at", { ascending: false })
         .limit(20);
 
-      const voteIds = (openVotes || []).map((v) => v.id);
-      if (!voteIds.length) {
-        setVotes([]);
+      const votesList = openVotes || [];
+      if (!votesList.length) {
+        setRows([]);
         setHorseNames({});
         setLoading(false);
         return;
       }
 
-      // 🐴 fetch horse names
-      const horseIds = Array.from(new Set((openVotes || []).map((v) => v.horse_id).filter(Boolean)));
+      // horse names
+      const horseIds = Array.from(new Set(votesList.map(v => v.horse_id).filter(Boolean)));
       if (horseIds.length) {
         const { data: horses } = await supabase.from("horses").select("id,name").in("id", horseIds);
-        setHorseNames(Object.fromEntries((horses || []).map((h) => [h.id, h.name])));
+        setHorseNames(Object.fromEntries((horses || []).map(h => [h.id, h.name])));
       } else {
         setHorseNames({});
       }
 
-      // Options
+      // options
+      const voteIds = votesList.map(v => v.id);
       const { data: allOptions } = await supabase
         .from("vote_options")
         .select("id, vote_id, label")
         .in("vote_id", voteIds);
 
       const optionsByVote = {};
-      (allOptions || []).forEach((o) => {
-        optionsByVote[o.vote_id] = optionsByVote[o.vote_id] || [];
-        optionsByVote[o.vote_id].push(o);
+      (allOptions || []).forEach(o => {
+        (optionsByVote[o.vote_id] = optionsByVote[o.vote_id] || []).push(o);
       });
 
-      // My responses
+      // my allocations (weights)
       const { data: my } = await supabase
         .from("vote_responses")
-        .select("id, vote_id, option_id")
+        .select("vote_id, option_id, weight")
         .eq("user_id", userId)
         .in("vote_id", voteIds);
 
       const myByVote = {};
-      (my || []).forEach((r) => (myByVote[r.vote_id] = r));
+      (my || []).forEach(r => {
+        (myByVote[r.vote_id] = myByVote[r.vote_id] || []).push(r);
+      });
 
-      setVotes(
-        (openVotes || []).map((v) => ({
+      // ownership for caps
+      let ownsByHorse = {};
+      if (horseIds.length) {
+        const { data: owns } = await supabase
+          .from("ownerships")
+          .select("horse_id, shares")
+          .eq("user_id", userId)
+          .in("horse_id", horseIds);
+        ownsByHorse = (owns || []).reduce((m, r) => {
+          m[r.horse_id] = (m[r.horse_id] || 0) + Number(r.shares || 0);
+          return m;
+        }, {});
+      }
+
+      const next = votesList.map(v => {
+        const opts = optionsByVote[v.id] || [];
+        const alloc = (myByVote[v.id] || []).reduce((m, r) => {
+          m[r.option_id] = Number(r.weight || 0);
+          return m;
+        }, {});
+        const cap = v.horse_id ? (ownsByHorse[v.horse_id] || 0) : 0;
+        const used = Object.values(alloc).reduce((s, n) => s + n, 0);
+
+        return {
           vote: v,
-          options: optionsByVote[v.id] || [],
-          myResponseId: myByVote[v.id]?.id || null,
-          myOptionId: myByVote[v.id]?.option_id || null,
-        }))
-      );
+          options: opts,
+          allocations: alloc,
+          cap,
+          used,
+          submitted: used > 0, // if they’ve previously saved anything, show as submitted
+        };
+      });
 
-      setChosen(
-        (openVotes || []).reduce((acc, v) => {
-          if (myByVote[v.id]?.option_id) acc[v.id] = myByVote[v.id].option_id;
-          return acc;
-        }, {})
-      );
-
+      setRows(next);
       setLoading(false);
     }
     load();
   }, [userId, ownedHorseIds]);
 
+  // mark UI dirty when allocations change and keep cap respected
+  const adjust = useCallback((voteId, optionId, delta) => {
+    setRows(prev => prev.map(row => {
+      if (row.vote.id !== voteId) return row;
+      const cur = row.allocations[optionId] || 0;
+      let newVal = Math.max(0, cur + delta);
+      const newUsed = row.used - cur + newVal;
+      if (newUsed > row.cap) newVal = cur + Math.max(0, row.cap - row.used);
+      return {
+        ...row,
+        allocations: { ...row.allocations, [optionId]: newVal },
+        used: row.used - cur + newVal,
+        submitted: false, // something changed -> not yet saved
+      };
+    }));
+  }, []);
+
+  async function refreshOne(voteId) {
+    // Pull canonical weights from DB and set submitted=true for that vote
+    const { data: fresh } = await supabase
+      .from("vote_responses")
+      .select("option_id, weight")
+      .eq("user_id", userId)
+      .eq("vote_id", voteId);
+
+    setRows(prev => prev.map(r => {
+      if (r.vote.id !== voteId) return r;
+      const alloc = (fresh || []).reduce((m, it) => {
+        m[it.option_id] = Number(it.weight || 0);
+        return m;
+      }, {});
+      const used = Object.values(alloc).reduce((s, n) => s + n, 0);
+      return { ...r, allocations: alloc, used, submitted: used > 0 };
+    }));
+  }
+
   async function submitVote(voteId) {
-    const optionId = chosen[voteId];
-    if (!optionId) return alert("Please select an option.");
-    setSaving((p) => ({ ...p, [voteId]: true }));
+    const row = rows.find(r => r.vote.id === voteId);
+    if (!row) return;
+    if (!row.cap) return alert("You’re not eligible to vote on this poll.");
+
+    setSaving(p => ({ ...p, [voteId]: true }));
+    setErr("");
+
     try {
+      const entries = Object.entries(row.allocations);
+
+      // Upsert all > 0
       const { data: existing } = await supabase
         .from("vote_responses")
-        .select("id")
-        .eq("vote_id", voteId)
+        .select("id, option_id")
         .eq("user_id", userId)
-        .maybeSingle();
-      if (existing) return alert("Your vote is already recorded.");
+        .eq("vote_id", voteId);
 
-      const { error } = await supabase.from("vote_responses").insert({
-        vote_id: voteId,
-        user_id: userId,
-        option_id: optionId,
-      });
-      if (error) throw error;
+      const existingByOption = Object.fromEntries((existing || []).map(r => [r.option_id, r.id]));
 
-      setVotes((items) =>
-        items.map((it) =>
-          it.vote.id === voteId ? { ...it, myOptionId: optionId, myResponseId: "tmp" } : it
-        )
-      );
+      for (const [option_id, weight] of entries) {
+        const w = Number(weight || 0);
+        const id = existingByOption[option_id];
+
+        if (w > 0 && id) {
+          const { error } = await supabase.from("vote_responses").update({ weight: w }).eq("id", id);
+          if (error) throw error;
+        } else if (w > 0 && !id) {
+          const { error } = await supabase.from("vote_responses").insert({
+            vote_id: voteId,
+            option_id,
+            user_id: userId,
+            weight: w,
+          });
+          if (error) throw error;
+        } else if (w === 0 && id) {
+          await supabase.from("vote_responses").delete().eq("id", id);
+        }
+      }
+
+      await refreshOne(voteId); // pull canonical + set submitted=true
     } catch (e) {
-      console.error("submitVote error:", e);
-      alert("Could not submit your vote. Please try again.");
+      console.error("submitVote weighted error:", e);
+      setErr(e.message || "Could not submit your votes.");
     } finally {
-      setSaving((p) => ({ ...p, [voteId]: false }));
+      setSaving(p => ({ ...p, [voteId]: false }));
     }
   }
 
   if (loading) return <p>Loading votes…</p>;
-  if (votes.length === 0)
+  if (rows.length === 0)
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
         <h3 className="font-semibold text-green-900">No open votes right now</h3>
@@ -1097,84 +1229,106 @@ function OpenVotes({ userId, ownedHorseIds }) {
     );
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      {votes.map(({ vote: v, options, myOptionId }) => {
-        const closes = v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null;
-        const hasVoted = Boolean(myOptionId);
-        const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null; // 🐴
+    <>
+      {err && <p className="mb-3 text-sm text-red-700">{err}</p>}
 
-        return (
-          <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
-            {/* 🐴 Horse name prominently at top */}
-            {horseName && (
-              <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
-            )}
+      <div className="grid md:grid-cols-2 gap-6">
+        {rows.map(({ vote: v, options, allocations, cap, used, submitted }) => {
+          const closes = v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null;
+          const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null;
+          const remaining = Math.max(0, cap - used);
 
-            <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
-            {v.description && <p className="text-sm text-gray-700 mt-1">{v.description}</p>}
-
-            {closes && (
-              <p className="text-xs text-gray-600 mt-2">
-                Closes: <strong>{closes}</strong>
-              </p>
-            )}
-
-            <fieldset className="mt-3 space-y-2" disabled={hasVoted}>
-              {options.length === 0 ? (
-                <p className="text-sm text-gray-600">No options configured.</p>
-              ) : (
-                options.map((opt) => (
-                  <label key={opt.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="radio"
-                      name={`vote-${v.id}`}
-                      value={opt.id}
-                      checked={(chosen[v.id] || "") === opt.id}
-                      onChange={() => setChosen((p) => ({ ...p, [v.id]: opt.id }))}
-                      disabled={hasVoted}
-                    />
-                    <span>{opt.label}</span>
-                  </label>
-                ))
+          return (
+            <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
+              {horseName && (
+                <h4 className="text-sm text-green-700 font-semibold mb-1">Horse: {horseName}</h4>
               )}
-            </fieldset>
+              <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
+              {v.description && <p className="text-sm text-gray-700 mt-1">{v.description}</p>}
+              {closes && (
+                <p className="text-xs text-gray-600 mt-2">
+                  Closes: <strong>{closes}</strong>
+                </p>
+              )}
 
-            <div className="mt-4 flex flex-wrap gap-2 items-center">
-              {!hasVoted ? (
+              <div className="mt-3 space-y-2">
+                {options.length === 0 ? (
+                  <p className="text-sm text-gray-600">No options configured.</p>
+                ) : (
+                  options.map((opt) => {
+                    const w = allocations[opt.id] || 0;
+                    return (
+                      <div key={opt.id} className="flex items-center justify-between gap-3">
+                        <span className="text-sm">{opt.label}</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="px-2 py-1 border rounded disabled:opacity-50"
+                            onClick={() => adjust(v.id, opt.id, -1)}
+                            disabled={w === 0}
+                            aria-label="decrease vote amount"
+                          >
+                            −
+                          </button>
+                          <span className="w-6 text-center text-sm font-medium">{w}</span>
+                          <button
+                            type="button"
+                            className="px-2 py-1 border rounded disabled:opacity-50"
+                            onClick={() => adjust(v.id, opt.id, +1)}
+                            disabled={remaining === 0}
+                            aria-label="increase vote amount"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="mt-3 flex items-center justify-between text-xs text-gray-600">
+                <span>Votes remaining: <strong>{remaining}</strong></span>
+                <span className="opacity-80">Allocated: {used}</span>
+              </div>
+
+              <div className="mt-4 flex items-center gap-3">
                 <button
                   onClick={() => submitVote(v.id)}
-                  disabled={!chosen[v.id] || saving[v.id]}
+                  disabled={saving[v.id] || cap === 0}
                   className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
                 >
-                  {saving[v.id] ? "Submitting…" : "Submit vote"}
+                  {saving[v.id] ? "Saving…" : submitted ? "Update votes" : "Submit votes"}
                 </button>
-              ) : (
-                <span className="inline-flex items-center text-sm px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800">
-                  ✅ You voted for&nbsp;
-                  <strong className="ml-1">
-                    {options.find((o) => o.id === myOptionId)?.label || "your choice"}
-                  </strong>
-                </span>
-              )}
-            </div>
 
-            <p className="mt-3 text-xs text-gray-500">Results are revealed when the vote closes.</p>
-          </article>
-        );
-      })}
-    </div>
+                {submitted && (
+                  <span className="inline-flex items-center text-sm px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800">
+                    ✅ Votes submitted
+                  </span>
+                )}
+              </div>
+
+              <p className="mt-3 text-xs text-gray-500">
+                Results are revealed when the vote closes.
+              </p>
+            </article>
+          );
+        })}
+      </div>
+    </>
   );
 }
-
-/* ----- Vote Results (closed votes only; show winner + horse name) ----- */
+/* ----- Vote Results (closed; weighted tally) ----- */
 function VoteResults({ userId, ownedHorseIds, isAdmin }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState([]);
-  const [horseNames, setHorseNames] = useState({}); // 🐴
+  const [horseNames, setHorseNames] = useState({});
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setErr("");
 
       if (!ownedHorseIds || ownedHorseIds.length === 0) {
         setItems([]);
@@ -1193,16 +1347,24 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
 
       if (votesErr) {
         console.error(votesErr);
+        setErr("Failed to load results.");
         setItems([]);
         setLoading(false);
         return;
       }
 
-      const voteIds = (votes || []).map((v) => v.id);
-      const horseIds = Array.from(new Set((votes || []).map((v) => v.horse_id).filter(Boolean)));
+      const list = votes || [];
+      if (!list.length) {
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+
+      const voteIds = list.map(v => v.id);
+      const horseIds = Array.from(new Set(list.map(v => v.horse_id).filter(Boolean)));
       if (horseIds.length) {
         const { data: horses } = await supabase.from("horses").select("id,name").in("id", horseIds);
-        setHorseNames(Object.fromEntries((horses || []).map((h) => [h.id, h.name])));
+        setHorseNames(Object.fromEntries((horses || []).map(h => [h.id, h.name])));
       }
 
       const { data: options } = await supabase
@@ -1210,23 +1372,24 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
         .select("id, vote_id, label")
         .in("vote_id", voteIds);
 
+      // pull weights; aggregate client-side (or use a view if you added one)
       const { data: responses } = await supabase
         .from("vote_responses")
-        .select("vote_id, option_id")
+        .select("vote_id, option_id, weight")
         .in("vote_id", voteIds);
 
       const optsByVote = {};
-      (options || []).forEach((o) => {
+      (options || []).forEach(o => {
         (optsByVote[o.vote_id] = optsByVote[o.vote_id] || []).push(o);
       });
 
       const countsByVote = {};
-      (responses || []).forEach((r) => {
+      (responses || []).forEach(r => {
         const bucket = (countsByVote[r.vote_id] = countsByVote[r.vote_id] || {});
-        bucket[r.option_id] = (bucket[r.option_id] || 0) + 1;
+        bucket[r.option_id] = (bucket[r.option_id] || 0) + Number(r.weight || 0);
       });
 
-      const rows = (votes || []).map((v) => {
+      const rows = list.map(v => {
         const counts = countsByVote[v.id] || {};
         const opts = optsByVote[v.id] || [];
         let max = 0;
@@ -1246,6 +1409,8 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
           vote: v,
           winnerLabels: winners,
           closedAt: v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null,
+          totals: counts,
+          options: opts,
         };
       });
 
@@ -1256,6 +1421,7 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
   }, [userId, ownedHorseIds, isAdmin]);
 
   if (loading) return <p>Loading results…</p>;
+  if (err) return <p className="text-sm text-red-700">{err}</p>;
   if (items.length === 0)
     return (
       <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
@@ -1268,8 +1434,8 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
 
   return (
     <div className="space-y-6">
-      {items.map(({ vote: v, winnerLabels, closedAt }) => {
-        const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null; // 🐴
+      {items.map(({ vote: v, winnerLabels, closedAt, totals, options }) => {
+        const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null;
         return (
           <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
             {horseName && (
@@ -1279,6 +1445,16 @@ function VoteResults({ userId, ownedHorseIds, isAdmin }) {
             <h3 className="text-lg font-semibold text-green-900">{v.title}</h3>
             {v.description && <p className="text-sm text-gray-700 mt-1">{v.description}</p>}
             {closedAt && <p className="text-xs text-gray-600 mt-1">Closed: {closedAt}</p>}
+
+            {/* Weighted totals */}
+            <div className="mt-3 space-y-1">
+              {options.map(o => (
+                <div key={o.id} className="flex items-center justify-between text-sm">
+                  <span>{o.label}</span>
+                  <span className="font-semibold">{totals[o.id] || 0}</span>
+                </div>
+              ))}
+            </div>
 
             <div className="mt-4">
               {winnerLabels.length === 0 ? (
@@ -1965,10 +2141,10 @@ function WalletTab({ userId: userIdProp }) {
       }
 
       try {
-        // Wallet transactions: credits & debits (e.g. “Applied to purchase”)
+        // Wallet transactions (credits & debits)
         const { data: tx } = await supabase
           .from("wallet_transactions")
-          .select("amount, type, status, memo, created_at")
+          .select("id, amount, type, status, memo, created_at")
           .eq("user_id", userId)
           .order("created_at", { ascending: false });
 
@@ -1976,36 +2152,14 @@ function WalletTab({ userId: userIdProp }) {
 
         // Compute balance from POSTED rows only
         const postedCredits = txRows
-          .filter(t => t.status === "posted" && t.type === "credit")
+          .filter((t) => t.status === "posted" && t.type === "credit")
           .reduce((s, t) => s + Number(t.amount || 0), 0);
         const postedDebits = txRows
-          .filter(t => t.status === "posted" && t.type === "debit")
+          .filter((t) => t.status === "posted" && t.type === "debit")
           .reduce((s, t) => s + Number(t.amount || 0), 0);
         setBalance(Math.max(0, postedCredits - postedDebits));
 
-        // Map credits -> feed
-        const creditEvents = txRows
-          .filter(t => t.type === "credit")
-          .map(t => ({
-            kind: "credit",
-            amount: Number(t.amount || 0),
-            memo: t.memo || "Winnings",
-            at: t.created_at,
-            status: t.status || "posted",
-          }));
-
-        // ✅ NEW: Map debits (wallet used toward purchases) -> feed
-        const debitEvents = txRows
-          .filter(t => t.type === "debit")
-          .map(t => ({
-            kind: "debit",
-            amount: Number(t.amount || 0),
-            memo: t.memo || "Wallet used toward a purchase",
-            at: t.created_at,
-            status: t.status || "posted",
-          }));
-
-        // Withdrawals table stays as-is
+        // Withdrawals table (requests + payouts)
         const { data: wr } = await supabase
           .from("wallet_withdrawals")
           .select("id, amount, status, created_at, processed_at")
@@ -2013,7 +2167,80 @@ function WalletTab({ userId: userIdProp }) {
           .order("created_at", { ascending: false })
           .limit(50);
 
-        const withdrawalEvents = (wr || []).map(r => ({
+        const wrRows = wr || [];
+
+        // ---------- Deduping logic ----------
+        // In production, some setups also write a *debit* row in wallet_transactions
+        // at (nearly) the same time/amount as the withdrawal request. We only want to
+        // show the human-friendly "Withdrawal request made" (from wallet_withdrawals),
+        // not an extra "Wallet used toward a purchase" line.
+        function toMs(s) {
+          try {
+            return new Date(s).getTime();
+          } catch {
+            return 0;
+          }
+        }
+        function toPence(n) {
+          // store as integer pence to compare amounts safely
+          return Math.round(Number(n || 0) * 100);
+        }
+
+        // Build lookup of withdrawals by (amount, time window)
+        const withdrawalIndex = new Map(); // key: amount_in_pence -> [timestamps_ms]
+        for (const w of wrRows) {
+          const key = toPence(w.amount);
+          const arr = withdrawalIndex.get(key) || [];
+          arr.push(toMs(w.created_at));
+          withdrawalIndex.set(key, arr);
+        }
+
+        // Helper: is a given debit likely the system debit that mirrors a withdrawal?
+        function looksLikeWithdrawalDebit(tx) {
+          if (!tx || tx.type !== "debit") return false;
+
+          // Strong hint in memo
+          const memo = String(tx.memo || "").toLowerCase();
+          if (memo.includes("withdrawal")) return true;
+
+          // Fuzzy match: same amount & very close time (+/- 90s) as a withdrawal record
+          const key = toPence(tx.amount);
+          const times = withdrawalIndex.get(key) || [];
+          if (!times.length) return false;
+
+          const t = toMs(tx.created_at);
+          const WINDOW = 90 * 1000; // 90 seconds
+          return times.some((wt) => Math.abs(wt - t) <= WINDOW);
+        }
+        // ---------- End deduping helpers ----------
+
+        // Credits
+        const creditEvents = txRows
+          .filter((t) => t.type === "credit")
+          .map((t) => ({
+            kind: "credit",
+            amount: Number(t.amount || 0),
+            memo: t.memo || "Winnings",
+            at: t.created_at,
+            status: t.status || "posted",
+          }));
+
+        // Debits (skip ones that match a withdrawal request)
+        const debitEvents = txRows
+          .filter((t) => t.type === "debit" && !looksLikeWithdrawalDebit(t))
+          .map((t) => ({
+            kind: "debit",
+            amount: Number(t.amount || 0),
+            memo:
+              t.memo && t.memo.trim()
+                ? t.memo
+                : "Wallet used toward a purchase",
+            at: t.created_at,
+            status: t.status || "posted",
+          }));
+
+        // Withdrawals feed items (always include these; this is what the user should see)
+        const withdrawalEvents = wrRows.map((r) => ({
           kind: "withdrawal",
           amount: Number(r.amount || 0),
           status: r.status,
@@ -2022,11 +2249,13 @@ function WalletTab({ userId: userIdProp }) {
         }));
 
         // Merge & sort (desc by time)
-        const merged = [...creditEvents, ...debitEvents, ...withdrawalEvents].sort((a, b) => {
-          const ta = a.kind === "withdrawal" ? a.requested_at : a.at;
-          const tb = b.kind === "withdrawal" ? b.requested_at : b.at;
-          return new Date(tb) - new Date(ta);
-        });
+        const merged = [...creditEvents, ...debitEvents, ...withdrawalEvents].sort(
+          (a, b) => {
+            const ta = a.kind === "withdrawal" ? a.requested_at : a.at;
+            const tb = b.kind === "withdrawal" ? b.requested_at : b.at;
+            return new Date(tb) - new Date(ta);
+          }
+        );
 
         setActivity(merged.slice(0, 20));
       } finally {
@@ -2038,7 +2267,7 @@ function WalletTab({ userId: userIdProp }) {
 
   function onChange(e) {
     const { name, value } = e.target;
-    setForm(p => ({ ...p, [name]: value }));
+    setForm((p) => ({ ...p, [name]: value }));
   }
 
   async function handleWithdrawSubmit(e) {
@@ -2093,7 +2322,10 @@ function WalletTab({ userId: userIdProp }) {
   }
 
   return (
-    <div id="panel-wallet" className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10">
+    <div
+      id="panel-wallet"
+      className="rounded-xl border bg-white p-6 shadow-sm dark:bg-neutral-900 dark:border-white/10"
+    >
       <h2 className="text-2xl font-bold text-green-900 mb-2">Wallet</h2>
 
       {loading ? (
@@ -2125,9 +2357,7 @@ function WalletTab({ userId: userIdProp }) {
                     step="0.01"
                     value={form.amount}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2
-           bg-white text-gray-900 placeholder-gray-400 border-gray-300
-           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300 dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                   />
                 </label>
                 <label className="text-sm">
@@ -2136,9 +2366,7 @@ function WalletTab({ userId: userIdProp }) {
                     name="account_name"
                     value={form.account_name}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2
-           bg-white text-gray-900 placeholder-gray-400 border-gray-300
-           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300 dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                   />
                 </label>
               </div>
@@ -2151,9 +2379,7 @@ function WalletTab({ userId: userIdProp }) {
                     inputMode="numeric"
                     value={form.sort_code}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2
-           bg-white text-gray-900 placeholder-gray-400 border-gray-300
-           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300 dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                     placeholder="e.g. 112233"
                   />
                 </label>
@@ -2164,9 +2390,7 @@ function WalletTab({ userId: userIdProp }) {
                     inputMode="numeric"
                     value={form.account_number}
                     onChange={onChange}
-                    className="mt-1 w-full border rounded px-3 py-2
-           bg-white text-gray-900 placeholder-gray-400 border-gray-300
-           dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
+                    className="mt-1 w-full border rounded px-3 py-2 bg-white text-gray-900 placeholder-gray-400 border-gray-300 dark:bg-neutral-800 dark:text-gray-100 dark:placeholder-gray-400 dark:border-white/10"
                     placeholder="e.g. 12345678"
                   />
                 </label>
@@ -2177,16 +2401,10 @@ function WalletTab({ userId: userIdProp }) {
                   type="submit"
                   disabled={saving || !userId}
                   className={`px-4 py-2 text-white rounded ${
-                    confirming
-                      ? "bg-red-700 hover:bg-red-800"
-                      : "bg-green-900 hover:bg-green-950"
+                    confirming ? "bg-red-700 hover:bg-red-800" : "bg-green-900 hover:bg-green-950"
                   } disabled:opacity-50`}
                 >
-                  {saving
-                    ? "Processing…"
-                    : confirming
-                    ? "Confirm withdrawal"
-                    : "Request withdrawal"}
+                  {saving ? "Processing…" : confirming ? "Confirm withdrawal" : "Request withdrawal"}
                 </button>
                 <span className="text-xs text-gray-600">
                   Please double-check all details are correct as any mistakes cannot be rectified.
@@ -2209,32 +2427,46 @@ function WalletTab({ userId: userIdProp }) {
                   if (ev.kind === "credit") {
                     return (
                       <li key={i} className="py-2">
-                        <div className="font-medium text-emerald-700">+£{fmtGBP(ev.amount)}</div>
-                        {ev.memo && <div className="text-xs text-gray-700 mt-0.5">{ev.memo}</div>}
-                        <div className="text-xs text-gray-600 mt-0.5">Winnings paid at — {fmtDate(ev.at)}</div>
+                        <div className="font-medium text-emerald-700">
+                          +£{fmtGBP(ev.amount)}
+                        </div>
+                        {ev.memo && (
+                          <div className="text-xs text-gray-700 mt-0.5">{ev.memo}</div>
+                        )}
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          Winnings paid at — {fmtDate(ev.at)}
+                        </div>
                       </li>
                     );
                   }
                   if (ev.kind === "debit") {
                     return (
                       <li key={i} className="py-2">
-                        <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
+                        <div className="font-medium text-rose-700">
+                          −£{fmtGBP(ev.amount)}
+                        </div>
                         <div className="text-xs text-gray-700 mt-0.5">
                           {ev.memo || "Wallet used toward a purchase"}
                         </div>
-                        <div className="text-xs text-gray-600 mt-0.5">Debited at — {fmtDate(ev.at)}</div>
+                        <div className="text-xs text-gray-600 mt-0.5">
+                          Debited at — {fmtDate(ev.at)}
+                        </div>
                       </li>
                     );
                   }
                   // withdrawal
                   return (
                     <li key={i} className="py-2">
-                      <div className="font-medium text-rose-700">−£{fmtGBP(ev.amount)}</div>
+                      <div className="font-medium text-rose-700">
+                        −£{fmtGBP(ev.amount)}
+                      </div>
                       <div className="text-xs text-gray-600 mt-0.5">
                         Withdrawal request made — {fmtDate(ev.requested_at)}
                       </div>
                       {ev.paid_at && (
-                        <div className="text-xs text-gray-600">Paid at — {fmtDate(ev.paid_at)}</div>
+                        <div className="text-xs text-gray-600">
+                          Paid at — {fmtDate(ev.paid_at)}
+                        </div>
                       )}
                       <div className="text-xs mt-1">
                         {ev.status === "requested" && (
