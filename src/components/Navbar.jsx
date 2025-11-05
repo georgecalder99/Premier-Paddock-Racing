@@ -32,37 +32,34 @@ export default function Navbar() {
       setSession(data?.session ?? null);
     })();
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub?.subscription?.unsubscribe();
+    return () => sub?.subscription?.unsubscribe?.();
   }, []);
 
-  // --- ensure a cart for logged-in user + initial DISTINCT HORSE count
+  // --- cart badge refresh helper (counts total quantity)
+  async function refreshBasketCount(forCartId) {
+    if (!forCartId) {
+      setBasketCount(0);
+      return;
+    }
+    const { data: items } = await supabase
+      .from("cart_items")
+      .select("qty")
+      .eq("cart_id", forCartId);
+
+    const totalQty = (items || []).reduce((s, r) => s + Number(r.qty || 0), 0);
+    setBasketCount(totalQty);
+  }
+
+  // --- ensure a cart exists (guest or authed) + get initial count
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!session?.user?.id) {
-        setCartId(null);
-        setBasketCount(0);
-        return;
-      }
       try {
-        const cart = await getOrCreateCart(); // must return an object with `id`
+        const cart = await getOrCreateCart(); // should work for guests too
         if (cancelled) return;
-        setCartId(cart?.id || null);
-
-        if (cart?.id) {
-          // Only fetch the horse_id; count DISTINCT horses
-          const { data: items, error } = await supabase
-            .from("cart_items")
-            .select("horse_id")
-            .eq("cart_id", cart.id);
-
-          if (!error && Array.isArray(items)) {
-            const distinctHorses = new Set(items.map((it) => it.horse_id)).size;
-            setBasketCount(distinctHorses);
-          } else {
-            setBasketCount(0);
-          }
-        }
+        const id = cart?.id || null;
+        setCartId(id);
+        await refreshBasketCount(id);
       } catch {
         if (!cancelled) {
           setCartId(null);
@@ -70,10 +67,11 @@ export default function Navbar() {
         }
       }
     })();
+    // refetch if auth state changes (e.g., guest -> logged in), but not gated on it
     return () => { cancelled = true; };
   }, [session?.user?.id]);
 
-  // --- realtime DISTINCT HORSE count updates for this cart
+  // --- realtime + event bus + route change refresh
   useEffect(() => {
     if (!cartId) return;
 
@@ -82,39 +80,45 @@ export default function Navbar() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "cart_items", filter: `cart_id=eq.${cartId}` },
-        async () => {
-          const { data: items } = await supabase
-            .from("cart_items")
-            .select("horse_id")
-            .eq("cart_id", cartId);
-
-          const distinctHorses = new Set((items || []).map((it) => it.horse_id)).size;
-          setBasketCount(distinctHorses);
-        }
+        () => refreshBasketCount(cartId)
       )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
-  }, [cartId]);
+    const busHandler = () => refreshBasketCount(cartId);
+    window.addEventListener("cart:changed", busHandler);
 
-  // SVG basket icon
-  const BasketIcon = useMemo(() => (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="w-5 h-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M6 6h15l-1.5 9h-12z" />
-      <path d="M6 6l-2 0" />
-      <circle cx="9" cy="19.5" r="1.5" />
-      <circle cx="17" cy="19.5" r="1.5" />
-    </svg>
-  ), []);
+    const routeHandler = () => refreshBasketCount(cartId);
+    router.events?.on?.("routeChangeComplete", routeHandler);
+
+    return () => {
+      supabase.removeChannel(channel);
+      window.removeEventListener("cart:changed", busHandler);
+      router.events?.off?.("routeChangeComplete", routeHandler);
+    };
+  }, [cartId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // SVG basket icon (stable size even without CSS)
+  const BasketIcon = useMemo(
+    () => (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width="20"
+        height="20"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M6 6h15l-1.5 9h-12z" />
+        <path d="M6 6l-2 0" />
+        <circle cx="9" cy="19.5" r="1.5" />
+        <circle cx="17" cy="19.5" r="1.5" />
+      </svg>
+    ),
+    []
+  );
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b">
@@ -170,13 +174,16 @@ export default function Navbar() {
             >
               {BasketIcon}
               <span>Basket</span>
-              {basketCount > 0 && (
-                <span
-                  className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 rounded-full bg-amber-600 text-white text-[11px] leading-5 text-center px-1"
-                >
-                  {basketCount}
-                </span>
-              )}
+              <span
+                className={
+                  "absolute -top-1 -right-1 min-w-[1.25rem] h-5 rounded-full text-[11px] leading-5 text-center px-1 transition " +
+                  (basketCount > 0
+                    ? "bg-amber-600 text-white opacity-100 scale-100"
+                    : "bg-transparent text-transparent opacity-0 scale-75")
+                }
+              >
+                {basketCount || 0}
+              </span>
             </Link>
           </div>
 
