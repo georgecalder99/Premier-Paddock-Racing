@@ -35,20 +35,36 @@ export default function Navbar() {
     return () => sub?.subscription?.unsubscribe?.();
   }, []);
 
-  // --- cart badge refresh helper (counts total quantity)
-  async function refreshBasketCount(forCartId) {
-    if (!forCartId) {
-      setBasketCount(0);
-      return;
-    }
-    const { data: items } = await supabase
-      .from("cart_items")
-      .select("qty")
-      .eq("cart_id", forCartId);
-
-    const totalQty = (items || []).reduce((s, r) => s + Number(r.qty || 0), 0);
-    setBasketCount(totalQty);
+  // --- cart badge refresh helper (counts unique horses/renewals, not total qty)
+async function refreshBasketCount(forCartId) {
+  if (!forCartId) {
+    setBasketCount(0);
+    return;
   }
+
+  // We only need identifiers to dedupe by kind
+  const { data: items, error } = await supabase
+    .from("cart_items")
+    .select("item_type, horse_id, renew_cycle_id")
+    .eq("cart_id", forCartId);
+
+  if (error) {
+    console.warn("[navbar] cart_items fetch error:", error);
+    setBasketCount(0);
+    return;
+  }
+
+  // Key = share per horse OR renewal per cycle
+  const keys = new Set(
+    (items || []).map((r) =>
+      r.item_type === "renewal"
+        ? `ren:${r.renew_cycle_id}`
+        : `shr:${r.horse_id}`
+    )
+  );
+
+  setBasketCount(keys.size);
+}
 
   // --- ensure a cart exists (guest or authed) + get initial count
   useEffect(() => {

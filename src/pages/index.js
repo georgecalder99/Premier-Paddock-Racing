@@ -253,9 +253,12 @@ function WelcomeToTheClub() {
   );
 }
 
+
+
 /* ===========================
-   NEW — Register Interest (moved up)
+   Register Interest (client-side Supabase insert)
 =========================== */
+
 function RegisterInterest() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -266,17 +269,21 @@ function RegisterInterest() {
     setMsg("");
     setBusy(true);
     try {
-      const res = await fetch("/api/interest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Something went wrong");
+      const eaddr = String(email || "").trim().toLowerCase();
+      const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(eaddr);
+      if (!ok) throw new Error("Please enter a valid email");
+
+      const { error } = await supabase
+        .from("interest_signups")
+        .insert({ email: eaddr, source: "home" });
+
+      // Treat duplicate email (unique violation 23505) as success
+      if (error && error.code !== "23505") throw error;
+
       setMsg("✅ Thanks — we’ll be in touch!");
       setEmail("");
     } catch (err) {
-      setMsg(`❌ ${err.message}`);
+      setMsg(`❌ ${err.message || "Something went wrong"}`);
     } finally {
       setBusy(false);
     }
@@ -291,7 +298,7 @@ function RegisterInterest() {
           </h2>
           <p className="mt-2 text-center text-gray-700">
             Priced at <strong>£45 a share</strong> and in training with one of Britain’s
-            leading trainers. <em>We are diving straight in!!</em> 
+            leading trainers. <em>We are diving straight in!!</em>
           </p>
 
           <form onSubmit={submit} className="mt-5 flex flex-col sm:flex-row gap-3">
@@ -312,13 +319,14 @@ function RegisterInterest() {
             </button>
           </form>
 
-          {msg && <p className="mt-3 text-center text-sm">{msg}</p>}
+          {msg && (
+            <p className="mt-3 text-center text-sm text-gray-700">{msg}</p>
+          )}
         </div>
       </div>
     </section>
   );
 }
-
 /* ===========================
    FEATURED HORSES (dark-mode safe) + PROMO
 =========================== */
