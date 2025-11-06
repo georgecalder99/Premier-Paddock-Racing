@@ -38,6 +38,11 @@ export default function Footer() {
               </Link>
             </li>
             <li>
+  <Link href="/register-interest" className="hover:underline">
+    Register your interest
+  </Link>
+</li>
+            <li>
               <Link href="/my-paddock" className="hover:underline">
                 My Paddock
               </Link>
