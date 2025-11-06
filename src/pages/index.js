@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import Image from "next/image";
+import { Analytics } from "@vercel/analytics/next"
 
 function ClientOnly({ children }) {
   const [ready, setReady] = useState(false);

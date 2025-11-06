@@ -992,18 +992,19 @@ function MyResults({ userId }) {
     </ul>
   );
 }
+
 /* ===========================
-   VOTING SECTION
-   Sub-tabs: open | results
+   VOTING SECTION WRAPPER
 =========================== */
 function VotingSection({ userId, ownedHorseIds, isAdmin }) {
-  const [sub, setSub] = useState("open"); // open | results
+  const [sub, setSub] = useState("open"); // "open" | "results"
+
   return (
     <div id="panel-voting">
       <div className="mb-3">
         <h2 className="text-3xl font-extrabold text-green-900">Your horse, Your say</h2>
         <p className="text-sm text-gray-600">
-          Cast your vote on key decisions. Results avaliable once vote is closed.
+          Cast your vote on key decisions. Results available once the vote is closed.
         </p>
       </div>
 
@@ -1022,37 +1023,40 @@ function VotingSection({ userId, ownedHorseIds, isAdmin }) {
   );
 }
 
-/* ----- Open Votes (weighted; confirms submission) ----- */
+/* ----- Open Votes (single option; per-horse share cap; one-and-done) ----- */
 function OpenVotes({ userId, ownedHorseIds }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState({});
   const [horseNames, setHorseNames] = useState({});
-  const [rows, setRows] = useState([]); // [{vote, options, allocations, cap, used, submitted}]
+  const [rows, setRows] = useState([]); // [{vote, options, chosen, cap, submitted}]
   const [err, setErr] = useState("");
 
-  // load open votes + options + my current weights + caps
   useEffect(() => {
     async function load() {
       setLoading(true);
       setErr("");
 
-      if (!ownedHorseIds || ownedHorseIds.length === 0) {
-        setRows([]);
-        setHorseNames({});
-        setLoading(false);
-        return;
-      }
-
       const nowIso = new Date().toISOString();
 
-      const { data: openVotes } = await supabase
+      // Get open votes for horses they own OR global votes (horse_id null).
+      const { data: openVotes, error: vErr } = await supabase
         .from("votes")
         .select("id, horse_id, title, description, status, cutoff_at, created_at")
         .eq("status", "open")
-        .or(`horse_id.in.(${ownedHorseIds.join(",")}),horse_id.is.null`)
+        .or(
+          ownedHorseIds?.length
+            ? `horse_id.in.(${ownedHorseIds.join(",")}),horse_id.is.null`
+            : "horse_id.is.null"
+        )
         .or(`cutoff_at.is.null,cutoff_at.gte.${nowIso}`)
         .order("created_at", { ascending: false })
         .limit(20);
+
+      if (vErr) {
+        setErr(vErr.message || "Failed to load votes.");
+        setLoading(false);
+        return;
+      }
 
       const votesList = openVotes || [];
       if (!votesList.length) {
@@ -1062,16 +1066,19 @@ function OpenVotes({ userId, ownedHorseIds }) {
         return;
       }
 
-      // horse names
+      // Horse names (display)
       const horseIds = Array.from(new Set(votesList.map(v => v.horse_id).filter(Boolean)));
       if (horseIds.length) {
-        const { data: horses } = await supabase.from("horses").select("id,name").in("id", horseIds);
+        const { data: horses } = await supabase
+          .from("horses")
+          .select("id,name")
+          .in("id", horseIds);
         setHorseNames(Object.fromEntries((horses || []).map(h => [h.id, h.name])));
       } else {
         setHorseNames({});
       }
 
-      // options
+      // Options per vote
       const voteIds = votesList.map(v => v.id);
       const { data: allOptions } = await supabase
         .from("vote_options")
@@ -1083,49 +1090,43 @@ function OpenVotes({ userId, ownedHorseIds }) {
         (optionsByVote[o.vote_id] = optionsByVote[o.vote_id] || []).push(o);
       });
 
-      // my allocations (weights)
+      // Existing responses to determine lock state
       const { data: my } = await supabase
         .from("vote_responses")
         .select("vote_id, option_id, weight")
         .eq("user_id", userId)
         .in("vote_id", voteIds);
 
-      const myByVote = {};
+      const chosenByVote = {};
       (my || []).forEach(r => {
-        (myByVote[r.vote_id] = myByVote[r.vote_id] || []).push(r);
+        if ((r.weight || 0) > 0 && !chosenByVote[r.vote_id]) {
+          chosenByVote[r.vote_id] = r.option_id; // any positive weight counts as "submitted"
+        }
       });
 
-      // ownership for caps
-      let ownsByHorse = {};
+      // Per-horse share caps
+      let sharesByHorse = {};
       if (horseIds.length) {
         const { data: owns } = await supabase
           .from("ownerships")
           .select("horse_id, shares")
           .eq("user_id", userId)
           .in("horse_id", horseIds);
-        ownsByHorse = (owns || []).reduce((m, r) => {
+
+        sharesByHorse = (owns || []).reduce((m, r) => {
           m[r.horse_id] = (m[r.horse_id] || 0) + Number(r.shares || 0);
           return m;
         }, {});
       }
 
+      // Build rows
       const next = votesList.map(v => {
         const opts = optionsByVote[v.id] || [];
-        const alloc = (myByVote[v.id] || []).reduce((m, r) => {
-          m[r.option_id] = Number(r.weight || 0);
-          return m;
-        }, {});
-        const cap = v.horse_id ? (ownsByHorse[v.horse_id] || 0) : 0;
-        const used = Object.values(alloc).reduce((s, n) => s + n, 0);
-
-        return {
-          vote: v,
-          options: opts,
-          allocations: alloc,
-          cap,
-          used,
-          submitted: used > 0, // if they’ve previously saved anything, show as submitted
-        };
+        // cap = shares for THAT vote's horse; for global votes (horse_id null) use 0 (no eligibility)
+        const cap = v.horse_id ? (sharesByHorse[v.horse_id] || 0) : 0;
+        const chosen = chosenByVote[v.id] || null;
+        const submitted = !!chosen; // hard lock once they’ve voted
+        return { vote: v, options: opts, chosen, cap, submitted };
       });
 
       setRows(next);
@@ -1134,86 +1135,64 @@ function OpenVotes({ userId, ownedHorseIds }) {
     load();
   }, [userId, ownedHorseIds]);
 
-  // mark UI dirty when allocations change and keep cap respected
-  const adjust = useCallback((voteId, optionId, delta) => {
-    setRows(prev => prev.map(row => {
-      if (row.vote.id !== voteId) return row;
-      const cur = row.allocations[optionId] || 0;
-      let newVal = Math.max(0, cur + delta);
-      const newUsed = row.used - cur + newVal;
-      if (newUsed > row.cap) newVal = cur + Math.max(0, row.cap - row.used);
-      return {
-        ...row,
-        allocations: { ...row.allocations, [optionId]: newVal },
-        used: row.used - cur + newVal,
-        submitted: false, // something changed -> not yet saved
-      };
-    }));
-  }, []);
+  function pickOption(voteId, optionId) {
+    setRows(prev =>
+      prev.map(r => {
+        if (r.vote.id !== voteId) return r;
+        if (r.submitted) return r; // locked
+        return { ...r, chosen: optionId };
+      })
+    );
+  }
 
-  async function refreshOne(voteId) {
-    // Pull canonical weights from DB and set submitted=true for that vote
+  async function refreshSubmitted(voteId) {
     const { data: fresh } = await supabase
       .from("vote_responses")
       .select("option_id, weight")
       .eq("user_id", userId)
       .eq("vote_id", voteId);
 
-    setRows(prev => prev.map(r => {
-      if (r.vote.id !== voteId) return r;
-      const alloc = (fresh || []).reduce((m, it) => {
-        m[it.option_id] = Number(it.weight || 0);
-        return m;
-      }, {});
-      const used = Object.values(alloc).reduce((s, n) => s + n, 0);
-      return { ...r, allocations: alloc, used, submitted: used > 0 };
-    }));
+    const chosen = (fresh || []).find(r => (r.weight || 0) > 0)?.option_id || null;
+
+    setRows(prev =>
+      prev.map(r => {
+        if (r.vote.id !== voteId) return r;
+        return { ...r, chosen, submitted: !!chosen };
+      })
+    );
   }
 
   async function submitVote(voteId) {
     const row = rows.find(r => r.vote.id === voteId);
     if (!row) return;
+    if (row.submitted) return; // already cast — locked
     if (!row.cap) return alert("You’re not eligible to vote on this poll.");
+    if (!row.chosen) return alert("Please select an option.");
 
     setSaving(p => ({ ...p, [voteId]: true }));
     setErr("");
 
     try {
-      const entries = Object.entries(row.allocations);
-
-      // Upsert all > 0
-      const { data: existing } = await supabase
+      // Defensive: clear any existing weights for this vote (should be none if locked logic worked)
+      await supabase
         .from("vote_responses")
-        .select("id, option_id")
+        .delete()
         .eq("user_id", userId)
         .eq("vote_id", voteId);
 
-      const existingByOption = Object.fromEntries((existing || []).map(r => [r.option_id, r.id]));
+      // Insert exactly one row with full weight = cap
+      const { error: insErr } = await supabase.from("vote_responses").insert({
+        vote_id: voteId,
+        option_id: row.chosen,
+        user_id: userId,
+        weight: row.cap,
+      });
+      if (insErr) throw insErr;
 
-      for (const [option_id, weight] of entries) {
-        const w = Number(weight || 0);
-        const id = existingByOption[option_id];
-
-        if (w > 0 && id) {
-          const { error } = await supabase.from("vote_responses").update({ weight: w }).eq("id", id);
-          if (error) throw error;
-        } else if (w > 0 && !id) {
-          const { error } = await supabase.from("vote_responses").insert({
-            vote_id: voteId,
-            option_id,
-            user_id: userId,
-            weight: w,
-          });
-          if (error) throw error;
-        } else if (w === 0 && id) {
-          await supabase.from("vote_responses").delete().eq("id", id);
-        }
-      }
-
-      await refreshOne(voteId); // pull canonical + set submitted=true
+      await refreshSubmitted(voteId); // will set submitted = true
     } catch (e) {
-      console.error("submitVote weighted error:", e);
-      setErr(e.message || "Could not submit your votes.");
+      console.error("submitVote (one-and-done) error:", e);
+      setErr(e.message || "Could not submit your vote.");
     } finally {
       setSaving(p => ({ ...p, [voteId]: false }));
     }
@@ -1233,10 +1212,9 @@ function OpenVotes({ userId, ownedHorseIds }) {
       {err && <p className="mb-3 text-sm text-red-700">{err}</p>}
 
       <div className="grid md:grid-cols-2 gap-6">
-        {rows.map(({ vote: v, options, allocations, cap, used, submitted }) => {
+        {rows.map(({ vote: v, options, chosen, cap, submitted }) => {
           const closes = v.cutoff_at ? new Date(v.cutoff_at).toLocaleString() : null;
-          const horseName = v.horse_id ? horseNames[v.horse_id] || "Unnamed horse" : null;
-          const remaining = Math.max(0, cap - used);
+          const horseName = v.horse_id ? (horseNames[v.horse_id] || "Unnamed horse") : null;
 
           return (
             <article key={v.id} className="bg-white rounded-xl border p-6 shadow-sm">
@@ -1255,61 +1233,50 @@ function OpenVotes({ userId, ownedHorseIds }) {
                 {options.length === 0 ? (
                   <p className="text-sm text-gray-600">No options configured.</p>
                 ) : (
-                  options.map((opt) => {
-                    const w = allocations[opt.id] || 0;
-                    return (
-                      <div key={opt.id} className="flex items-center justify-between gap-3">
-                        <span className="text-sm">{opt.label}</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="px-2 py-1 border rounded disabled:opacity-50"
-                            onClick={() => adjust(v.id, opt.id, -1)}
-                            disabled={w === 0}
-                            aria-label="decrease vote amount"
-                          >
-                            −
-                          </button>
-                          <span className="w-6 text-center text-sm font-medium">{w}</span>
-                          <button
-                            type="button"
-                            className="px-2 py-1 border rounded disabled:opacity-50"
-                            onClick={() => adjust(v.id, opt.id, +1)}
-                            disabled={remaining === 0}
-                            aria-label="increase vote amount"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
+                  options.map(opt => (
+                    <label
+                      key={opt.id}
+                      className={
+                        "flex items-center justify-between gap-3 rounded border px-3 py-2 " +
+                        (submitted ? "opacity-70 cursor-not-allowed" : "")
+                      }
+                    >
+                      <span className="text-sm">{opt.label}</span>
+                      <input
+                        type="radio"
+                        name={`vote-${v.id}`}
+                        value={opt.id}
+                        disabled={submitted}
+                        checked={chosen === opt.id}
+                        onChange={() => pickOption(v.id, opt.id)}
+                      />
+                    </label>
+                  ))
                 )}
               </div>
 
-              <div className="mt-3 flex items-center justify-between text-xs text-gray-600">
-                <span>Votes remaining: <strong>{remaining}</strong></span>
-                <span className="opacity-80">Allocated: {used}</span>
+              <div className="mt-3 text-xs text-gray-600">
+                Votes available for this poll: <strong>{cap}</strong>
               </div>
 
               <div className="mt-4 flex items-center gap-3">
                 <button
                   onClick={() => submitVote(v.id)}
-                  disabled={saving[v.id] || cap === 0}
+                  disabled={submitted || !cap || !chosen || saving[v.id]}
                   className="px-4 py-2 bg-green-900 text-white rounded disabled:opacity-50"
                 >
-                  {saving[v.id] ? "Saving…" : submitted ? "Update votes" : "Submit votes"}
+                  {submitted ? "Vote submitted" : saving[v.id] ? "Submitting…" : "Submit vote"}
                 </button>
 
                 {submitted && (
                   <span className="inline-flex items-center text-sm px-3 py-1 rounded bg-green-50 border border-green-200 text-green-800">
-                    ✅ Votes submitted
+                    ✅ Vote submitted
                   </span>
                 )}
               </div>
 
               <p className="mt-3 text-xs text-gray-500">
-                Results are revealed when the vote closes.
+                You get one vote per share you own in this horse. Votes are final and can’t be changed.
               </p>
             </article>
           );
@@ -1318,6 +1285,8 @@ function OpenVotes({ userId, ownedHorseIds }) {
     </>
   );
 }
+
+
 /* ----- Vote Results (closed; weighted tally) ----- */
 function VoteResults({ userId, ownedHorseIds, isAdmin }) {
   const [loading, setLoading] = useState(true);
