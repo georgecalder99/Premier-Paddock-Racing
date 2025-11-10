@@ -2,12 +2,14 @@ import dynamic from "next/dynamic";
 import Head from "next/head";
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/router";
 import { supabase } from "../lib/supabaseClient";
 
 function RegisterInterestPage() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const router = useRouter();
 
   async function submit(e) {
     e.preventDefault();
@@ -20,14 +22,20 @@ function RegisterInterestPage() {
 
       const { error } = await supabase
         .from("interest_signups")
-        .insert({ email: eaddr, source: "page" }); // distinct source
+        .insert({ email: eaddr, source: "page" });
 
-      // treat duplicate as success
-      if (error && error.code !== "23505") throw error;
+      // Treat duplicate as success
+      if (error && error.code !== "23505") {
+        console.error("[interest] insert error:", error);
+        throw error;
+      }
 
-      setMsg("✅ Thanks — you’re on the list!");
-      setEmail("");
+      console.log("[interest] success, redirecting…");
+      // Prefer Next’s client navigation
+      router.replace("/register-success");
+      return; // stop here after redirect
     } catch (err) {
+      console.error("[interest] submit failed:", err);
       setMsg(`❌ ${err.message || "Something went wrong"}`);
     } finally {
       setBusy(false);
@@ -92,5 +100,4 @@ function RegisterInterestPage() {
   );
 }
 
-// IMPORTANT: export exactly one default, and disable SSR so browser-only Supabase code is safe
 export default dynamic(() => Promise.resolve(RegisterInterestPage), { ssr: false });
